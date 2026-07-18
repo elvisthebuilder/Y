@@ -6,8 +6,11 @@ description = "Decentralized, anonymous chat over Tor with cryptographic identit
 
 [dependencies]
 # Tor connectivity
-arti-client = "0.27"
+arti-client = { version = "0.27", features = ["tokio", "onion-service-client", "onion-service-service"] }
 tor-rtcompat = { version = "0.27", features = ["tokio"] }
+tor-hsservice = "0.27"
+tor-cell = { version = "0.27", features = ["hs"] }
+futures = "0.3"
 
 # Crypto - identity & message signing
 ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }

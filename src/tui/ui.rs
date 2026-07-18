@@ -269,6 +269,13 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(&app.identity_address, Style::default().fg(ACCENT)),
         ]),
         Line::from(vec![
+            Span::styled("Onion:     ", Style::default().fg(DIM)),
+            Span::styled(
+                app.onion_address.as_deref().unwrap_or("bootstrapping..."),
+                Style::default().fg(ACCENT),
+            ),
+        ]),
+        Line::from(vec![
             Span::styled("Peers:     ", Style::default().fg(DIM)),
             Span::raw(format!("{}", app.peer_count)),
         ]),
