@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod crypto;
 mod protocol;
 mod network;
@@ -15,6 +17,7 @@ use crossterm::{
 use ratatui::prelude::*;
 use tracing::info;
 
+use crate::crypto::alias;
 use crate::crypto::identity::Identity;
 use crate::storage::Storage;
 use crate::tui::app::App;
@@ -53,13 +56,31 @@ async fn main() -> Result<()> {
         }
     };
 
+    let user_alias = match storage.load_alias()? {
+        Some(a) => a,
+        None => {
+            let a = alias::generate_alias();
+            storage.save_alias(&a)?;
+            info!("Generated alias: {}", a);
+            a
+        }
+    };
+    let handle = alias::display_handle(&user_alias, &identity.address);
+
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(identity.address.clone());
+    let mut app = App::new(identity.address.clone(), handle.clone(), user_alias.clone());
+
+    if let Ok(messages) = storage.get_timeline(100) {
+        app.timeline = messages;
+    }
+    if let Ok(bookmarks) = storage.get_bookmarked_posts() {
+        app.bookmarks = bookmarks;
+    }
 
     loop {
         terminal.draw(|frame| tui::ui::draw(frame, &app))?;
@@ -78,6 +99,39 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+        }
+
+        if let Some(new_alias) = app.pending_alias_change.take() {
+            let _ = storage.save_alias(&new_alias);
+        }
+
+        if app.pending_post {
+            if let Some(msg) = app.timeline.first() {
+                let _ = storage.save_message(msg);
+            }
+            app.pending_post = false;
+        }
+
+        if let Some(post_id) = app.pending_nod.take() {
+            if let Some(msg) = app.timeline.iter().find(|m| m.id == post_id) {
+                let _ = storage.save_message(msg);
+            }
+        }
+
+        if let Some((post_id, add)) = app.pending_bookmark.take() {
+            if add {
+                let _ = storage.bookmark_post(&post_id);
+            } else {
+                let _ = storage.unbookmark_post(&post_id);
+            }
+        }
+
+        if app.pending_save {
+            // Save any modified messages
+            for msg in &app.timeline {
+                let _ = storage.save_message(msg);
+            }
+            app.pending_save = false;
         }
 
         if app.should_quit {

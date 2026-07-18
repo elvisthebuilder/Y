@@ -56,16 +56,40 @@ cargo run
 | `t` | Timeline (public posts) |
 | `d` | Direct messages |
 | `c` | Communities |
+| `b` | Bookmarks |
 | `p` | Profile / identity |
 | `n` | Compose new post |
-| `j`/`k` | Scroll down/up |
+| `j`/`k` | Navigate posts |
+| `.` | Nod at selected post (respect) |
+| `r` | Reply to selected post |
+| `s` | Bookmark / unbookmark post |
+| `Enter` | Open thread view |
+| `/` | Search users |
 | `:` | Command mode |
 | `q` | Quit |
 
 ### Commands
-- `:whoami` — Show your address
+- `:whoami` — Show your handle and address
 - `:peers` — Show connected peer count
+- `:alias <name>` — Set your alias manually
+- `:alias-gen` — Generate a random alias
+- `:search <query>` — Search users by alias or address
 - `:quit` — Exit
+
+## Identity & Aliases
+
+Your identity is auto-generated on first run:
+- **Address**: `root:a8Kx2m...` (cryptographic, permanent)
+- **Alias**: `phantom-cipher` (human-readable, changeable)
+- **Handle**: `phantom-cipher#a8Kx` (alias + short address for disambiguation)
+
+Aliases are not globally unique — multiple users can share the same alias. The `#shortcode` suffix disambiguates them. Set yours manually or let Y generate one for you.
+
+## Interactions
+
+- **Nod** — A subtle acknowledgment. No hearts, no clapping. Just respect. One nod per user per post.
+- **Reply** — Threaded replies linked to the parent post. Open any post to see the full thread.
+- **Bookmark** — Save posts locally. Only you can see your bookmarks.
 
 ## Architecture
 

@@ -16,7 +16,17 @@ pub struct Identity {
 pub struct PublicIdentity {
     pub address: String,
     pub verifying_key_bytes: [u8; 32],
-    pub display_name: Option<String>,
+    pub alias: String,
+}
+
+impl PublicIdentity {
+    pub fn handle(&self) -> String {
+        super::alias::display_handle(&self.alias, &self.address)
+    }
+
+    pub fn short_id(&self) -> String {
+        super::alias::short_address(&self.address)
+    }
 }
 
 impl Identity {
@@ -56,7 +66,7 @@ impl Identity {
         PublicIdentity {
             address: self.address.clone(),
             verifying_key_bytes: self.verifying_key.to_bytes(),
-            display_name: None,
+            alias: super::alias::generate_alias(),
         }
     }
 
@@ -75,5 +85,22 @@ impl Identity {
 impl PublicIdentity {
     pub fn verifying_key(&self) -> Result<VerifyingKey> {
         Ok(VerifyingKey::from_bytes(&self.verifying_key_bytes)?)
+    }
+
+    pub fn matches_search(&self, query: &str) -> bool {
+        let q = query.to_lowercase();
+        self.alias.to_lowercase().contains(&q)
+            || self.address.to_lowercase().contains(&q)
+            || self.handle().to_lowercase().contains(&q)
+    }
+}
+
+impl Identity {
+    pub fn public_identity_with_alias(&self, alias: String) -> PublicIdentity {
+        PublicIdentity {
+            address: self.address.clone(),
+            verifying_key_bytes: self.verifying_key.to_bytes(),
+            alias,
+        }
     }
 }
