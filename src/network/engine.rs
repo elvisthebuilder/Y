@@ -1,18 +1,18 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
 use anyhow::Result;
 use arti_client::DataStream;
 use chrono::Utc;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
+use super::codec::FramedStream;
+use super::dht::{Dht, DhtNode, DhtValue, NodeId, StoredDm, StoredPost};
+use super::protocol::{EncryptedEnvelope, HelloPayload, PeerAnnounce, WireMessage};
+use super::tor::TorTransport;
 use crate::crypto::identity::Identity;
 use crate::protocol::message::Message;
-use super::codec::FramedStream;
-use super::dht::{Dht, DhtNode, DhtValue, NodeId, StoredPost, StoredDm};
-use super::protocol::{WireMessage, HelloPayload, PeerAnnounce, EncryptedEnvelope};
-use super::tor::TorTransport;
 
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {
@@ -70,7 +70,9 @@ impl NetworkEngine {
         let mut incoming = transport.start_hidden_service(self.listen_port).await?;
 
         if let Some(addr) = transport.onion_address() {
-            let _ = self.event_tx.send(NetworkEvent::OnionReady(addr.to_string()));
+            let _ = self
+                .event_tx
+                .send(NetworkEvent::OnionReady(addr.to_string()));
             info!("Y node reachable at: {}", addr);
         }
 
@@ -103,7 +105,8 @@ impl NetworkEngine {
     pub async fn connect_to(&self, onion_addr: &str) -> Result<()> {
         info!("Connecting to peer at {}", onion_addr);
         let tor_lock = self.tor.read().await;
-        let tor = tor_lock.as_ref()
+        let tor = tor_lock
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Tor not bootstrapped yet"))?;
         let stream = tor.connect(onion_addr).await?;
         drop(tor_lock);
@@ -119,7 +122,8 @@ impl NetworkEngine {
 
         let my_onion = {
             let tor_lock = self.tor.read().await;
-            tor_lock.as_ref()
+            tor_lock
+                .as_ref()
                 .and_then(|t| t.onion_address().map(|s| s.to_string()))
                 .unwrap_or_default()
         };
@@ -157,21 +161,26 @@ impl NetworkEngine {
 
     async fn register_peer(&self, hello: &HelloPayload) {
         let mut peers = self.peers.write().await;
-        peers.insert(hello.address.clone(), PeerConnection {
-            address: hello.address.clone(),
-            alias: hello.alias.clone(),
-            onion_addr: hello.listen_addr.clone(),
-        });
+        peers.insert(
+            hello.address.clone(),
+            PeerConnection {
+                address: hello.address.clone(),
+                alias: hello.alias.clone(),
+                onion_addr: hello.listen_addr.clone(),
+            },
+        );
         let count = peers.len();
         drop(peers);
 
         // Add to DHT routing table
-        self.dht.add_node(DhtNode {
-            id: NodeId::from_address(&hello.address),
-            address: hello.address.clone(),
-            onion_addr: hello.listen_addr.clone(),
-            last_seen: Utc::now(),
-        }).await;
+        self.dht
+            .add_node(DhtNode {
+                id: NodeId::from_address(&hello.address),
+                address: hello.address.clone(),
+                onion_addr: hello.listen_addr.clone(),
+                last_seen: Utc::now(),
+            })
+            .await;
 
         let _ = self.event_tx.send(NetworkEvent::PeerConnected {
             address: hello.address.clone(),
@@ -201,7 +210,9 @@ impl NetworkEngine {
                 }
                 WireMessage::RequestTimeline { since, limit } => {
                     let timeline = self.dht_get_timeline(since, limit).await;
-                    framed.send_json(&WireMessage::TimelineResponse(timeline)).await?;
+                    framed
+                        .send_json(&WireMessage::TimelineResponse(timeline))
+                        .await?;
                 }
                 WireMessage::DirectMessage(envelope) => {
                     if envelope.recipient == self.identity.address {
@@ -212,32 +223,46 @@ impl NetworkEngine {
                     }
                 }
                 WireMessage::NodNotify { post_id, from } => {
-                    let _ = self.event_tx.send(NetworkEvent::NodReceived { post_id, from });
+                    let _ = self
+                        .event_tx
+                        .send(NetworkEvent::NodReceived { post_id, from });
                 }
                 WireMessage::RequestPeers => {
                     let peers = self.peers.read().await;
-                    let announces: Vec<PeerAnnounce> = peers.values().map(|p| PeerAnnounce {
-                        address: p.address.clone(),
-                        alias: p.alias.clone(),
-                        listen_addr: p.onion_addr.clone(),
-                        last_seen: Utc::now(),
-                    }).collect();
-                    framed.send_json(&WireMessage::PeersResponse(announces)).await?;
+                    let announces: Vec<PeerAnnounce> = peers
+                        .values()
+                        .map(|p| PeerAnnounce {
+                            address: p.address.clone(),
+                            alias: p.alias.clone(),
+                            listen_addr: p.onion_addr.clone(),
+                            last_seen: Utc::now(),
+                        })
+                        .collect();
+                    framed
+                        .send_json(&WireMessage::PeersResponse(announces))
+                        .await?;
                 }
                 WireMessage::PeersResponse(new_peers) => {
                     for peer in new_peers {
                         let existing = self.peers.read().await;
-                        if !existing.contains_key(&peer.address) && peer.address != self.identity.address {
+                        if !existing.contains_key(&peer.address)
+                            && peer.address != self.identity.address
+                        {
                             drop(existing);
-                            info!("Discovered new peer: {} at {}", peer.alias, peer.listen_addr);
+                            info!(
+                                "Discovered new peer: {} at {}",
+                                peer.alias, peer.listen_addr
+                            );
 
                             // Add to DHT routing table even if we can't connect yet
-                            self.dht.add_node(DhtNode {
-                                id: NodeId::from_address(&peer.address),
-                                address: peer.address.clone(),
-                                onion_addr: peer.listen_addr.clone(),
-                                last_seen: Utc::now(),
-                            }).await;
+                            self.dht
+                                .add_node(DhtNode {
+                                    id: NodeId::from_address(&peer.address),
+                                    address: peer.address.clone(),
+                                    onion_addr: peer.listen_addr.clone(),
+                                    last_seen: Utc::now(),
+                                })
+                                .await;
 
                             let tor_lock = self.tor.read().await;
                             if let Some(tor) = tor_lock.as_ref() {
@@ -258,7 +283,9 @@ impl NetworkEngine {
                                         timestamp: Utc::now(),
                                     };
                                     let _ = new_framed.send_json(&WireMessage::Hello(hello)).await;
-                                    if let Ok(WireMessage::HelloAck(ack)) = new_framed.recv_json().await {
+                                    if let Ok(WireMessage::HelloAck(ack)) =
+                                        new_framed.recv_json().await
+                                    {
                                         self.register_peer(&ack).await;
                                     }
                                 }
@@ -266,9 +293,17 @@ impl NetworkEngine {
                         }
                     }
                 }
-                WireMessage::DhtRequest { request_id, request } => {
+                WireMessage::DhtRequest {
+                    request_id,
+                    request,
+                } => {
                     let response = self.dht.handle_request(request).await;
-                    framed.send_json(&WireMessage::DhtResponse { request_id, response }).await?;
+                    framed
+                        .send_json(&WireMessage::DhtResponse {
+                            request_id,
+                            response,
+                        })
+                        .await?;
                 }
                 WireMessage::DhtResponse { .. } => {
                     // Responses are handled by the requester's task
@@ -299,11 +334,15 @@ impl NetworkEngine {
 
         // Store at the post's key
         let key = Dht::post_key(&post.id);
-        self.dht.store_value(&key, DhtValue::Post(stored.clone())).await;
+        self.dht
+            .store_value(&key, DhtValue::Post(stored.clone()))
+            .await;
 
         // Also store in author's timeline key
         let timeline_key = Dht::timeline_key(&post.author);
-        self.dht.store_value(&timeline_key, DhtValue::Post(stored)).await;
+        self.dht
+            .store_value(&timeline_key, DhtValue::Post(stored))
+            .await;
     }
 
     async fn dht_store_dm(&self, envelope: &EncryptedEnvelope) {
@@ -325,10 +364,16 @@ impl NetworkEngine {
         };
 
         let key = Dht::dm_key(&envelope.recipient);
-        self.dht.store_value(&key, DhtValue::DirectMessage(stored)).await;
+        self.dht
+            .store_value(&key, DhtValue::DirectMessage(stored))
+            .await;
     }
 
-    async fn dht_get_timeline(&self, _since: Option<chrono::DateTime<Utc>>, _limit: u32) -> Vec<Message> {
+    async fn dht_get_timeline(
+        &self,
+        _since: Option<chrono::DateTime<Utc>>,
+        _limit: u32,
+    ) -> Vec<Message> {
         // Return posts stored in our local DHT node
         // In a full implementation, this would do an iterative lookup
         Vec::new()
@@ -475,13 +520,16 @@ impl NetworkEngine {
     pub async fn fetch_user_timeline(&self, user_address: &str) -> Vec<Message> {
         let key = Dht::timeline_key(user_address);
         if let Some(values) = self.dht.get_value(&key).await {
-            values.into_iter().filter_map(|v| {
-                if let DhtValue::Post(stored) = v {
-                    serde_json::from_slice(&stored.content).ok()
-                } else {
-                    None
-                }
-            }).collect()
+            values
+                .into_iter()
+                .filter_map(|v| {
+                    if let DhtValue::Post(stored) = v {
+                        serde_json::from_slice(&stored.content).ok()
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         } else {
             Vec::new()
         }

@@ -1,14 +1,13 @@
-use std::path::PathBuf;
-use std::sync::Arc;
 use anyhow::Result;
-use arti_client::{TorClient, DataStream};
 use arti_client::config::TorClientConfigBuilder;
-use tor_cell::relaycell::msg::Connected;
-use tor_hsservice::{RunningOnionService, RendRequest};
-use tor_hsservice::config::OnionServiceConfigBuilder;
-use tor_rtcompat::PreferredRuntime;
+use arti_client::{DataStream, TorClient};
 use futures::StreamExt;
+use std::sync::Arc;
 use tokio::sync::mpsc;
+use tor_cell::relaycell::msg::Connected;
+use tor_hsservice::config::OnionServiceConfigBuilder;
+use tor_hsservice::{RendRequest, RunningOnionService};
+use tor_rtcompat::PreferredRuntime;
 use tracing::{info, warn};
 
 pub struct TorTransport {
@@ -18,20 +17,19 @@ pub struct TorTransport {
 }
 
 impl TorTransport {
-    pub async fn bootstrap(data_dir: &PathBuf) -> Result<Self> {
+    pub async fn bootstrap(data_dir: &std::path::Path) -> Result<Self> {
         let tor_dir = data_dir.join("tor");
         std::fs::create_dir_all(&tor_dir)?;
 
         info!("Bootstrapping Tor client (this may take a moment on first run)...");
 
-        let config = TorClientConfigBuilder::from_directories(
-            tor_dir.join("state"),
-            tor_dir.join("cache"),
-        )
-            .build()
-            .map_err(|e| anyhow::anyhow!("Tor config build error: {}", e))?;
+        let config =
+            TorClientConfigBuilder::from_directories(tor_dir.join("state"), tor_dir.join("cache"))
+                .build()
+                .map_err(|e| anyhow::anyhow!("Tor config build error: {}", e))?;
 
-        let client = TorClient::create_bootstrapped(config).await
+        let client = TorClient::create_bootstrapped(config)
+            .await
             .map_err(|e| anyhow::anyhow!("Tor bootstrap error: {}", e))?;
 
         info!("Tor client bootstrapped successfully");
@@ -43,8 +41,12 @@ impl TorTransport {
         })
     }
 
-    pub async fn start_hidden_service(&mut self, port: u16) -> Result<mpsc::UnboundedReceiver<DataStream>> {
-        let nickname = "y-chat".parse()
+    pub async fn start_hidden_service(
+        &mut self,
+        port: u16,
+    ) -> Result<mpsc::UnboundedReceiver<DataStream>> {
+        let nickname = "y-chat"
+            .parse()
             .map_err(|e| anyhow::anyhow!("Bad nickname: {}", e))?;
 
         let svc_config = OnionServiceConfigBuilder::default()
@@ -52,10 +54,13 @@ impl TorTransport {
             .build()
             .map_err(|e| anyhow::anyhow!("Onion service config error: {}", e))?;
 
-        let (service, rend_requests) = self.client.launch_onion_service(svc_config)
+        let (service, rend_requests) = self
+            .client
+            .launch_onion_service(svc_config)
             .map_err(|e| anyhow::anyhow!("Failed to launch onion service: {}", e))?;
 
-        let onion_addr = service.onion_name()
+        let onion_addr = service
+            .onion_name()
             .map(|hsid| format!("{}.onion:{}", hsid, port))
             .unwrap_or_else(|| "pending.onion".to_string());
 
@@ -95,7 +100,10 @@ impl TorTransport {
     }
 
     pub async fn connect(&self, onion_addr: &str) -> Result<DataStream> {
-        let stream = self.client.connect(onion_addr).await
+        let stream = self
+            .client
+            .connect(onion_addr)
+            .await
             .map_err(|e| anyhow::anyhow!("Tor connect error: {}", e))?;
         Ok(stream)
     }

@@ -14,9 +14,14 @@ pub struct Community {
 
 impl Community {
     pub fn new(name: String, description: String, owner: String, locked: bool) -> Self {
-        let id = format!("comm:{}", &sha2::Sha256::digest(
-            format!("{}:{}", owner, name).as_bytes()
-        ).iter().take(8).map(|b| format!("{:02x}", b)).collect::<String>());
+        let id = format!(
+            "comm:{}",
+            &sha2::Sha256::digest(format!("{}:{}", owner, name).as_bytes())
+                .iter()
+                .take(8)
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>()
+        );
 
         let mut members = HashSet::new();
         members.insert(owner.clone());

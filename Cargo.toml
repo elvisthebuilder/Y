@@ -38,6 +38,9 @@ sled = "0.34"
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# CLI
+clap = { version = "4", features = ["derive"] }
+
 # Error handling
 anyhow = "1"
 thiserror = "1"

@@ -54,10 +54,19 @@ pub struct CommunityMsg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PeerCommand {
     Announce(AnnouncePayload),
-    RequestPosts { since: DateTime<Utc>, limit: u32 },
+    RequestPosts {
+        since: DateTime<Utc>,
+        limit: u32,
+    },
     DeliverMessages(Vec<Message>),
-    NodPost { post_id: String, from: String },
-    JoinCommunity { community_id: String, invite_token: Option<String> },
+    NodPost {
+        post_id: String,
+        from: String,
+    },
+    JoinCommunity {
+        community_id: String,
+        invite_token: Option<String>,
+    },
     Ping,
     Pong,
 }

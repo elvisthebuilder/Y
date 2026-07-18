@@ -46,11 +46,13 @@ Every message is cryptographically signed — tampered messages are rejected by 
 # Clone and build
 git clone https://github.com/elvisthebuilder/Y.git
 cd Y
-cargo build --release
+cargo install --path .
 
-# Run (bootstraps Tor automatically on first launch)
-cargo run
+# Open Y (bootstraps Tor automatically on first launch)
+y open
 ```
+
+Running `y` with no subcommand also opens the chat interface.
 
 On first run, Y bootstraps the Tor client and creates your hidden service. This takes ~30 seconds the first time (downloading Tor consensus data), subsequent launches are faster.
 
@@ -59,14 +61,22 @@ On first run, Y bootstraps the Tor client and creates your hidden service. This 
 Share your `.onion` address (shown in your Profile tab) with someone. They connect with:
 
 ```bash
-Y_PEER=your-address.onion:7331 cargo run
+Y_PEER=your-address.onion:7331 y open
 ```
 
 Or set a custom port:
 
 ```bash
-Y_PORT=8080 cargo run
+Y_PORT=8080 y open
 ```
+
+### Uninstall
+
+```bash
+y uninstall
+```
+
+This removes the binary and all local data (`~/.root-chat`).
 
 ## Controls
 

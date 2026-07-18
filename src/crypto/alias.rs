@@ -1,19 +1,17 @@
 use rand::Rng;
 
 const ADJECTIVES: &[&str] = &[
-    "silent", "dark", "neon", "phantom", "ghost", "shadow", "void",
-    "cyber", "toxic", "frozen", "burning", "hidden", "lost", "iron",
-    "lunar", "solar", "deep", "wild", "bitter", "hollow", "broken",
-    "chrome", "rust", "static", "zero", "null", "rogue", "feral",
-    "ancient", "blind", "cold", "dead", "electric", "fatal", "grim",
+    "silent", "dark", "neon", "phantom", "ghost", "shadow", "void", "cyber", "toxic", "frozen",
+    "burning", "hidden", "lost", "iron", "lunar", "solar", "deep", "wild", "bitter", "hollow",
+    "broken", "chrome", "rust", "static", "zero", "null", "rogue", "feral", "ancient", "blind",
+    "cold", "dead", "electric", "fatal", "grim",
 ];
 
 const NOUNS: &[&str] = &[
-    "fox", "wolf", "crow", "viper", "hawk", "shark", "spider",
-    "orbit", "pulse", "signal", "wraith", "spectre", "cipher",
-    "daemon", "node", "glitch", "storm", "blade", "echo", "drift",
-    "spark", "flame", "frost", "thorn", "root", "core", "shell",
-    "byte", "flux", "haze", "moss", "raven", "skull", "surge",
+    "fox", "wolf", "crow", "viper", "hawk", "shark", "spider", "orbit", "pulse", "signal",
+    "wraith", "spectre", "cipher", "daemon", "node", "glitch", "storm", "blade", "echo", "drift",
+    "spark", "flame", "frost", "thorn", "root", "core", "shell", "byte", "flux", "haze", "moss",
+    "raven", "skull", "surge",
 ];
 
 pub fn generate_alias() -> String {

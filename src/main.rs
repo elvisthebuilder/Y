@@ -1,21 +1,22 @@
 #![allow(dead_code)]
 
+mod community;
 mod crypto;
-mod protocol;
 mod network;
+mod protocol;
 mod storage;
 mod tui;
-mod community;
 
-use std::path::PathBuf;
-use std::sync::Arc;
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -25,17 +26,58 @@ use crate::network::engine::{NetworkEngine, NetworkEvent};
 use crate::storage::Storage;
 use crate::tui::app::App;
 
-fn data_dir() -> PathBuf {
-    dirs_or_default()
+#[derive(Parser)]
+#[command(name = "y", about = "Decentralized, anonymous chat over Tor")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
 }
 
-fn dirs_or_default() -> PathBuf {
+#[derive(Subcommand)]
+enum Command {
+    /// Open Y — launch the chat interface
+    Open,
+    /// Uninstall Y — remove binary and data
+    Uninstall,
+}
+
+fn data_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".root-chat")
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Command::Uninstall) => uninstall(),
+        Some(Command::Open) | None => open().await,
+    }
+}
+
+fn uninstall() -> Result<()> {
+    let data_path = data_dir();
+
+    // Remove data directory
+    if data_path.exists() {
+        std::fs::remove_dir_all(&data_path)?;
+        println!("Removed data directory: {}", data_path.display());
+    } else {
+        println!("No data directory found at {}", data_path.display());
+    }
+
+    // Remove the binary
+    if let Ok(exe) = std::env::current_exe() {
+        std::fs::remove_file(&exe)?;
+        println!("Removed binary: {}", exe.display());
+    }
+
+    println!("Y has been uninstalled.");
+    Ok(())
+}
+
+async fn open() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter("root_chat=info")
@@ -234,15 +276,14 @@ async fn main() -> Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-    println!("root-chat terminated. Identity: {}", identity.address);
+    println!("Y terminated. Identity: {}", identity.address);
     Ok(())
 }
 
 fn copy_to_clipboard(text: &str) {
-    use std::process::{Command, Stdio};
     use std::io::Write;
+    use std::process::{Command, Stdio};
 
-    // Try xclip first, then xsel, then wl-copy (Wayland)
     let commands = [
         ("xclip", vec!["-selection", "clipboard"]),
         ("xsel", vec!["--clipboard", "--input"]),

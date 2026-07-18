@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use anyhow::{anyhow, Result};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_FRAME_SIZE: u32 = 1024 * 1024; // 1MB max message
 

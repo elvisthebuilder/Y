@@ -1,7 +1,7 @@
-pub mod tor;
-pub mod peer;
-pub mod search;
 pub mod codec;
-pub mod protocol;
 pub mod dht;
 pub mod engine;
+pub mod peer;
+pub mod protocol;
+pub mod search;
+pub mod tor;

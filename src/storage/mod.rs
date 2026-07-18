@@ -16,7 +16,8 @@ impl Storage {
     }
 
     pub fn save_identity(&self, identity: &Identity) -> Result<()> {
-        self.db.insert("identity", identity.secret_bytes().as_slice())?;
+        self.db
+            .insert("identity", identity.secret_bytes().as_slice())?;
         self.db.flush()?;
         Ok(())
     }
@@ -24,7 +25,9 @@ impl Storage {
     pub fn load_identity(&self) -> Result<Option<Identity>> {
         match self.db.get("identity")? {
             Some(bytes) => {
-                let secret: [u8; 32] = bytes.as_ref().try_into()
+                let secret: [u8; 32] = bytes
+                    .as_ref()
+                    .try_into()
                     .map_err(|_| anyhow::anyhow!("corrupt identity"))?;
                 Ok(Some(Identity::from_bytes(&secret)))
             }
@@ -81,7 +84,7 @@ impl Storage {
                 break;
             }
         }
-        messages.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        messages.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
         Ok(messages)
     }
 
@@ -111,7 +114,7 @@ impl Storage {
                 messages.push(msg);
             }
         }
-        messages.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        messages.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
         Ok(messages)
     }
 }

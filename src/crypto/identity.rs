@@ -1,9 +1,9 @@
+use anyhow::Result;
 use base64::Engine;
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
-use anyhow::Result;
+use sha2::{Digest, Sha256};
 
 #[derive(Clone)]
 pub struct Identity {
@@ -78,7 +78,10 @@ impl Identity {
         let mut hasher = Sha256::new();
         hasher.update(key.as_bytes());
         let hash = hasher.finalize();
-        format!("root:{}", &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&hash[..16]))
+        format!(
+            "root:{}",
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&hash[..16])
+        )
     }
 }
 

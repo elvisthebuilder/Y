@@ -51,13 +51,14 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 
     let status_text = format!("{} | {} peers ", status_icon, app.peer_count);
 
-    let header = Paragraph::new(Line::from(tabs))
-        .block(Block::default()
+    let header = Paragraph::new(Line::from(tabs)).block(
+        Block::default()
             .title(" Y ")
             .title_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
             .title_bottom("")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(ACCENT)));
+            .border_style(Style::default().fg(ACCENT)),
+    );
 
     frame.render_widget(header, area);
 
@@ -70,10 +71,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
             status_width,
             1,
         );
-        let status = Paragraph::new(Span::styled(
-            status_text,
-            Style::default().fg(status_color),
-        ));
+        let status = Paragraph::new(Span::styled(status_text, Style::default().fg(status_color)));
         frame.render_widget(status, status_area);
     }
 }
@@ -91,7 +89,13 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_post_list(frame: &mut Frame, app: &App, _posts: &[crate::protocol::message::Message], title: &str, area: Rect) {
+fn draw_post_list(
+    frame: &mut Frame,
+    app: &App,
+    _posts: &[crate::protocol::message::Message],
+    title: &str,
+    area: Rect,
+) {
     let entries = app.visible_entries();
 
     let items: Vec<ListItem> = if entries.is_empty() {
@@ -100,133 +104,143 @@ fn draw_post_list(frame: &mut Frame, app: &App, _posts: &[crate::protocol::messa
             Style::default().fg(DIM),
         ))]
     } else {
-        entries.iter().enumerate().flat_map(|(i, entry)| {
-            let is_selected = i == app.selected_post;
-            let depth = entry.depth;
+        entries
+            .iter()
+            .enumerate()
+            .flat_map(|(i, entry)| {
+                let is_selected = i == app.selected_post;
+                let depth = entry.depth;
 
-            // Build the thread line prefix for this depth
-            let mut tree_prefix = String::new();
-            for d in 0..depth {
-                if d < entry.ancestors_continuing.len() && entry.ancestors_continuing[d] {
-                    tree_prefix.push_str("│  ");
-                } else {
-                    tree_prefix.push_str("   ");
-                }
-            }
-
-            // The connector for this node
-            let connector = if depth > 0 {
-                if entry.is_last_sibling {
-                    "└─ "
-                } else {
-                    "├─ "
-                }
-            } else {
-                ""
-            };
-
-            if entry.is_collapse_marker {
-                let line = format!(
-                    "  {}{}Show {} more replies...",
-                    tree_prefix, connector, entry.hidden_count
-                );
-                let style = if is_selected {
-                    Style::default().fg(ACCENT)
-                } else {
-                    Style::default().fg(DIM)
-                };
-                return vec![
-                    ListItem::new(Span::styled(line, style)),
-                    ListItem::new(Span::raw("")),
-                ];
-            }
-
-            let msg = entry.message;
-            let text = match &msg.content {
-                MessageContent::Post(p) => p.text.clone(),
-                MessageContent::Reply(r) => r.text.clone(),
-                _ => "(other)".into(),
-            };
-
-            let author_display = if msg.author.len() > 20 {
-                msg.author[..20].to_string()
-            } else {
-                msg.author.clone()
-            };
-
-            let select_marker = if is_selected { ">" } else { " " };
-
-            // Line 1: tree + author
-            let is_reply = depth > 0;
-            let header_line = format!(
-                "{} {}{}{}",
-                select_marker, tree_prefix, connector, author_display
-            );
-            let base_color = if is_reply { REPLY_COLOR } else { ACCENT };
-            let header_style = if is_selected {
-                Style::default().fg(base_color).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(base_color)
-            };
-
-            // Continuation prefix for lines under this node
-            let continuation = if depth > 0 {
-                let mut c = String::from("  ");
+                // Build the thread line prefix for this depth
+                let mut tree_prefix = String::new();
                 for d in 0..depth {
                     if d < entry.ancestors_continuing.len() && entry.ancestors_continuing[d] {
-                        c.push_str("│  ");
+                        tree_prefix.push_str("│  ");
                     } else {
-                        c.push_str("   ");
+                        tree_prefix.push_str("   ");
                     }
                 }
-                c.push_str("   ");
-                c
-            } else {
-                "    ".to_string()
-            };
 
-            // Line 2: content
-            let content_line = format!("{}{}", continuation, text);
-            let content_style = if is_reply {
-                Style::default().fg(REPLY_COLOR)
-            } else {
-                Style::default()
-            };
+                // The connector for this node
+                let connector = if depth > 0 {
+                    if entry.is_last_sibling {
+                        "└─ "
+                    } else {
+                        "├─ "
+                    }
+                } else {
+                    ""
+                };
 
-            // Line 3: meta (with proper singular/plural)
-            let is_bookmarked = app.bookmarks.iter().any(|b| b.id == msg.id);
-            let nod_count = msg.nod_count();
-            let reply_count = msg.reply_count();
-            let nods = if nod_count == 1 {
-                "1 nod".to_string()
-            } else {
-                format!("{} nods", nod_count)
-            };
-            let replies = if reply_count == 1 {
-                "1 reply".to_string()
-            } else {
-                format!("{} replies", reply_count)
-            };
-            let bookmark_indicator = if is_bookmarked { " [saved]" } else { "" };
-            let meta_line = format!("{}{} | {}{}", continuation, nods, replies, bookmark_indicator);
+                if entry.is_collapse_marker {
+                    let line = format!(
+                        "  {}{}Show {} more replies...",
+                        tree_prefix, connector, entry.hidden_count
+                    );
+                    let style = if is_selected {
+                        Style::default().fg(ACCENT)
+                    } else {
+                        Style::default().fg(DIM)
+                    };
+                    return vec![
+                        ListItem::new(Span::styled(line, style)),
+                        ListItem::new(Span::raw("")),
+                    ];
+                }
 
-            let mut lines = vec![
-                ListItem::new(Span::styled(header_line, header_style)),
-                ListItem::new(Span::styled(content_line, content_style)),
-                ListItem::new(Span::styled(meta_line, Style::default().fg(DIM))),
-            ];
+                let msg = entry.message;
+                let text = match &msg.content {
+                    MessageContent::Post(p) => p.text.clone(),
+                    MessageContent::Reply(r) => r.text.clone(),
+                    _ => "(other)".into(),
+                };
 
-            // Add thread continuation line if this post has visible replies
-            let has_replies = !entry.is_collapse_marker && msg.reply_count() > 0;
-            if has_replies && depth == 0 {
-                let thread_line = format!("  │");
-                lines.push(ListItem::new(Span::styled(thread_line, Style::default().fg(DIM))));
-            } else {
-                lines.push(ListItem::new(Span::raw("")));
-            }
+                let author_display = if msg.author.len() > 20 {
+                    msg.author[..20].to_string()
+                } else {
+                    msg.author.clone()
+                };
 
-            lines
-        }).collect()
+                let select_marker = if is_selected { ">" } else { " " };
+
+                // Line 1: tree + author
+                let is_reply = depth > 0;
+                let header_line = format!(
+                    "{} {}{}{}",
+                    select_marker, tree_prefix, connector, author_display
+                );
+                let base_color = if is_reply { REPLY_COLOR } else { ACCENT };
+                let header_style = if is_selected {
+                    Style::default().fg(base_color).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(base_color)
+                };
+
+                // Continuation prefix for lines under this node
+                let continuation = if depth > 0 {
+                    let mut c = String::from("  ");
+                    for d in 0..depth {
+                        if d < entry.ancestors_continuing.len() && entry.ancestors_continuing[d] {
+                            c.push_str("│  ");
+                        } else {
+                            c.push_str("   ");
+                        }
+                    }
+                    c.push_str("   ");
+                    c
+                } else {
+                    "    ".to_string()
+                };
+
+                // Line 2: content
+                let content_line = format!("{}{}", continuation, text);
+                let content_style = if is_reply {
+                    Style::default().fg(REPLY_COLOR)
+                } else {
+                    Style::default()
+                };
+
+                // Line 3: meta (with proper singular/plural)
+                let is_bookmarked = app.bookmarks.iter().any(|b| b.id == msg.id);
+                let nod_count = msg.nod_count();
+                let reply_count = msg.reply_count();
+                let nods = if nod_count == 1 {
+                    "1 nod".to_string()
+                } else {
+                    format!("{} nods", nod_count)
+                };
+                let replies = if reply_count == 1 {
+                    "1 reply".to_string()
+                } else {
+                    format!("{} replies", reply_count)
+                };
+                let bookmark_indicator = if is_bookmarked { " [saved]" } else { "" };
+                let meta_line = format!(
+                    "{}{} | {}{}",
+                    continuation, nods, replies, bookmark_indicator
+                );
+
+                let mut lines = vec![
+                    ListItem::new(Span::styled(header_line, header_style)),
+                    ListItem::new(Span::styled(content_line, content_style)),
+                    ListItem::new(Span::styled(meta_line, Style::default().fg(DIM))),
+                ];
+
+                // Add thread continuation line if this post has visible replies
+                let has_replies = !entry.is_collapse_marker && msg.reply_count() > 0;
+                if has_replies && depth == 0 {
+                    let thread_line = "  │".to_string();
+                    lines.push(ListItem::new(Span::styled(
+                        thread_line,
+                        Style::default().fg(DIM),
+                    )));
+                } else {
+                    lines.push(ListItem::new(Span::raw("")));
+                }
+
+                lines
+            })
+            .collect()
     };
 
     // Scroll to keep selection visible
@@ -246,25 +260,27 @@ fn draw_post_list(frame: &mut Frame, app: &App, _posts: &[crate::protocol::messa
     } else {
         " [.]=nod [r]=reply [s]=save [x]=delete [Enter]=expand/collapse "
     };
-    let list = List::new(items_to_show)
-        .block(Block::default()
+    let list = List::new(items_to_show).block(
+        Block::default()
             .title(title)
             .title_bottom(Line::from(Span::styled(help, Style::default().fg(DIM))))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(DIM)));
+            .border_style(Style::default().fg(DIM)),
+    );
 
     frame.render_widget(list, area);
 }
-
 
 fn draw_dms(frame: &mut Frame, app: &App, area: Rect) {
     let block = Paragraph::new("  End-to-end encrypted. No one else can read these.")
         .scroll((app.scroll_offset as u16, 0))
         .style(Style::default().fg(DIM))
-        .block(Block::default()
-            .title(" Direct Messages ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(DIM)));
+        .block(
+            Block::default()
+                .title(" Direct Messages ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(DIM)),
+        );
     frame.render_widget(block, area);
 }
 
@@ -272,10 +288,12 @@ fn draw_communities(frame: &mut Frame, app: &App, area: Rect) {
     let block = Paragraph::new("  No communities joined. Use :join <id> to join one.")
         .scroll((app.scroll_offset as u16, 0))
         .style(Style::default().fg(DIM))
-        .block(Block::default()
-            .title(" Communities ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(DIM)));
+        .block(
+            Block::default()
+                .title(" Communities ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(DIM)),
+        );
     frame.render_widget(block, area);
 }
 
@@ -283,7 +301,10 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
     let info = vec![
         Line::from(vec![
             Span::styled("Handle:    ", Style::default().fg(DIM)),
-            Span::styled(&app.handle, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &app.handle,
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Alias:     ", Style::default().fg(DIM)),
@@ -327,40 +348,49 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
 
     let block = Paragraph::new(info)
         .scroll((app.scroll_offset as u16, 0))
-        .block(Block::default()
-            .title(" Identity ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(DIM)));
+        .block(
+            Block::default()
+                .title(" Identity ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(DIM)),
+        );
     frame.render_widget(block, area);
 }
 
 fn draw_compose(frame: &mut Frame, app: &App, area: Rect) {
     let title = " Compose (Esc=cancel, Enter=post, Shift+Enter=new line) ";
-    let block = Paragraph::new(app.input_buffer.as_str())
-        .block(Block::default()
+    let block = Paragraph::new(app.input_buffer.as_str()).block(
+        Block::default()
             .title(title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(ACCENT)));
+            .border_style(Style::default().fg(ACCENT)),
+    );
     frame.render_widget(block, area);
 
     // Position cursor in multiline text
     let text_before_cursor = &app.input_buffer[..app.cursor_pos];
     let line_num = text_before_cursor.matches('\n').count();
-    let col = text_before_cursor.rfind('\n')
+    let col = text_before_cursor
+        .rfind('\n')
         .map(|pos| app.cursor_pos - pos - 1)
         .unwrap_or(app.cursor_pos);
-    frame.set_cursor_position((
-        area.x + 1 + col as u16,
-        area.y + 1 + line_num as u16,
-    ));
+    frame.set_cursor_position((area.x + 1 + col as u16, area.y + 1 + line_num as u16));
 }
 
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     let (title, content, cursor_offset) = match app.input_mode {
         InputMode::Normal => ("Normal", String::new(), 0),
         InputMode::Editing => ("Insert", app.input_buffer.clone(), app.cursor_pos),
-        InputMode::Command => ("Command", format!(":{}", app.input_buffer), app.cursor_pos + 1),
-        InputMode::SearchInput => ("Search", format!("/{}", app.input_buffer), app.cursor_pos + 1),
+        InputMode::Command => (
+            "Command",
+            format!(":{}", app.input_buffer),
+            app.cursor_pos + 1,
+        ),
+        InputMode::SearchInput => (
+            "Search",
+            format!("/{}", app.input_buffer),
+            app.cursor_pos + 1,
+        ),
         InputMode::Replying => ("Reply", app.input_buffer.clone(), app.cursor_pos),
     };
 
@@ -372,29 +402,24 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         InputMode::Replying => Color::Magenta,
     };
 
-    let input = Paragraph::new(content)
-        .block(Block::default()
+    let input = Paragraph::new(content).block(
+        Block::default()
             .title(format!(" {} ", title))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color)));
+            .border_style(Style::default().fg(border_color)),
+    );
 
     frame.render_widget(input, area);
 
     // Place the visible cursor when in an input mode (but not Editing — compose handles its own)
     if app.input_mode != InputMode::Normal && app.input_mode != InputMode::Editing {
-        frame.set_cursor_position((
-            area.x + 1 + cursor_offset as u16,
-            area.y + 1,
-        ));
+        frame.set_cursor_position((area.x + 1 + cursor_offset as u16, area.y + 1));
     }
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let display_msg = truncate_onion(&app.status_message);
-    let status = Paragraph::new(Span::styled(
-        display_msg,
-        Style::default().fg(DIM),
-    ));
+    let status = Paragraph::new(Span::styled(display_msg, Style::default().fg(DIM)));
     frame.render_widget(status, area);
 }
 
@@ -402,13 +427,18 @@ fn truncate_onion(msg: &str) -> String {
     if let Some(pos) = msg.find(".onion") {
         let before_onion = &msg[..pos];
         // Find start of the onion address (after last space or colon)
-        let addr_start = before_onion.rfind(|c: char| c == ' ' || c == ':')
+        let addr_start = before_onion
+            .rfind([' ', ':'])
             .map(|i| i + 1)
             .unwrap_or(0);
         let onion_addr = &msg[addr_start..];
         if onion_addr.len() > 20 {
             let prefix = &msg[..addr_start];
-            let short = format!("{}...{}", &onion_addr[..8], &onion_addr[onion_addr.len()-12..]);
+            let short = format!(
+                "{}...{}",
+                &onion_addr[..8],
+                &onion_addr[onion_addr.len() - 12..]
+            );
             format!("{}{}", prefix, short)
         } else {
             msg.to_string()
@@ -435,21 +465,28 @@ fn draw_search(frame: &mut Frame, app: &App, area: Rect) {
         )));
     } else {
         for result in &app.search_results {
-            lines.push(Line::from(Span::styled(result, Style::default().fg(ACCENT))));
+            lines.push(Line::from(Span::styled(
+                result,
+                Style::default().fg(ACCENT),
+            )));
         }
     }
 
-    let block = Paragraph::new(lines)
-        .block(Block::default()
+    let block = Paragraph::new(lines).block(
+        Block::default()
             .title(" Search Users [/] ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(ACCENT)));
+            .border_style(Style::default().fg(ACCENT)),
+    );
     frame.render_widget(block, area);
 }
 
 fn tab_span(label: &str, active: bool) -> Span<'_> {
     if active {
-        Span::styled(label, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
+        Span::styled(
+            label,
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::styled(label, Style::default().fg(DIM))
     }

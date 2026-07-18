@@ -1,7 +1,7 @@
-use std::collections::HashSet;
+use crate::protocol::message::{Message, MessageContent, Nod, PostMessage, ReplyMessage};
 use chrono::Utc;
 use rand;
-use crate::protocol::message::{Message, MessageContent, PostMessage, ReplyMessage, Nod};
+use std::collections::HashSet;
 
 pub struct DisplayEntry<'a> {
     pub message: &'a Message,
@@ -159,9 +159,7 @@ impl App {
             View::Bookmarks => &self.bookmarks,
             _ => &self.timeline,
         };
-        let top_level: Vec<&Message> = posts.iter()
-            .filter(|m| m.reply_to.is_none())
-            .collect();
+        let top_level: Vec<&Message> = posts.iter().filter(|m| m.reply_to.is_none()).collect();
 
         let mut entries = Vec::new();
         for msg in &top_level {
@@ -187,7 +185,8 @@ impl App {
             is_last_sibling: false,
         });
 
-        let replies: Vec<&Message> = all_posts.iter()
+        let replies: Vec<&Message> = all_posts
+            .iter()
             .filter(|m| m.reply_to.as_deref() == Some(&msg.id))
             .collect();
 
@@ -226,7 +225,9 @@ impl App {
 
     fn selected_message_id(&self) -> Option<String> {
         let entries = self.visible_entries();
-        entries.get(self.selected_post).map(|e| e.message.id.clone())
+        entries
+            .get(self.selected_post)
+            .map(|e| e.message.id.clone())
     }
 
     fn selected_message_mut(&mut self) -> Option<&mut Message> {
@@ -254,10 +255,23 @@ impl App {
         match self.input_mode {
             InputMode::Normal => match key {
                 'q' => self.should_quit = true,
-                't' => { self.view = View::Timeline; self.selected_post = 0; self.scroll_offset = 0; }
-                'd' => { self.view = View::DirectMessages; self.scroll_offset = 0; }
-                'c' => { self.view = View::Communities; self.scroll_offset = 0; }
-                'p' => { self.view = View::Profile; self.scroll_offset = 0; }
+                't' => {
+                    self.view = View::Timeline;
+                    self.selected_post = 0;
+                    self.scroll_offset = 0;
+                }
+                'd' => {
+                    self.view = View::DirectMessages;
+                    self.scroll_offset = 0;
+                }
+                'c' => {
+                    self.view = View::Communities;
+                    self.scroll_offset = 0;
+                }
+                'p' => {
+                    self.view = View::Profile;
+                    self.scroll_offset = 0;
+                }
                 'y' if self.view == View::Profile => {
                     if let Some(ref addr) = self.onion_address {
                         self.pending_copy = Some(addr.clone());
@@ -282,12 +296,11 @@ impl App {
                     self.input_mode = InputMode::Editing;
                     self.clear_input();
                 }
-                'r' => {
-                    if self.selected_message_id().is_some() {
+                'r'
+                    if self.selected_message_id().is_some() => {
                         self.input_mode = InputMode::Replying;
                         self.clear_input();
                     }
-                }
                 '.' => {
                     self.nod_selected();
                 }
@@ -307,29 +320,25 @@ impl App {
                     self.input_mode = InputMode::Command;
                     self.clear_input();
                 }
-                'j' => {
-                    match self.view {
-                        View::Timeline | View::Bookmarks => {
-                            let max = self.visible_entries().len();
-                            if self.selected_post + 1 < max {
-                                self.selected_post += 1;
-                            }
-                        }
-                        _ => {
-                            self.scroll_offset = self.scroll_offset.saturating_add(1);
+                'j' => match self.view {
+                    View::Timeline | View::Bookmarks => {
+                        let max = self.visible_entries().len();
+                        if self.selected_post + 1 < max {
+                            self.selected_post += 1;
                         }
                     }
-                }
-                'k' => {
-                    match self.view {
-                        View::Timeline | View::Bookmarks => {
-                            self.selected_post = self.selected_post.saturating_sub(1);
-                        }
-                        _ => {
-                            self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                        }
+                    _ => {
+                        self.scroll_offset = self.scroll_offset.saturating_add(1);
                     }
-                }
+                },
+                'k' => match self.view {
+                    View::Timeline | View::Bookmarks => {
+                        self.selected_post = self.selected_post.saturating_sub(1);
+                    }
+                    _ => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    }
+                },
                 _ => {}
             },
             InputMode::Editing => match key {
@@ -451,7 +460,8 @@ impl App {
         self.timeline.retain(|m| m.id != id);
 
         // Also remove any replies to this post
-        self.timeline.retain(|m| m.reply_to.as_deref() != Some(id.as_str()));
+        self.timeline
+            .retain(|m| m.reply_to.as_deref() != Some(id.as_str()));
 
         // Remove from bookmarks if bookmarked
         self.bookmarks.retain(|m| m.id != id);
@@ -559,7 +569,9 @@ impl App {
             } else {
                 let id = entry.message.id.clone();
                 // Check if this post actually has replies in the timeline
-                let has_child_replies = self.timeline.iter()
+                let has_child_replies = self
+                    .timeline
+                    .iter()
                     .any(|m| m.reply_to.as_deref() == Some(id.as_str()));
                 if !has_child_replies {
                     self.status_message = "No replies to expand.".into();
@@ -576,7 +588,6 @@ impl App {
         }
     }
 
-
     fn execute_command(&mut self) {
         let cmd = self.input_buffer.trim().to_string();
         let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
@@ -584,12 +595,24 @@ impl App {
         match parts[0] {
             "quit" | "q" => self.should_quit = true,
             "peers" => self.status_message = format!("Connected peers: {}", self.peer_count),
-            "whoami" => self.status_message = format!("{} ({})", self.handle, self.identity_address),
+            "whoami" => {
+                self.status_message = format!("{} ({})", self.handle, self.identity_address)
+            }
             "alias" => {
                 if parts.len() > 1 {
                     let new_alias = parts[1].to_string();
                     self.alias = new_alias.clone();
-                    self.handle = format!("{}#{}", new_alias, &self.identity_address.strip_prefix("root:").unwrap_or(&self.identity_address).chars().take(4).collect::<String>());
+                    self.handle = format!(
+                        "{}#{}",
+                        new_alias,
+                        &self
+                            .identity_address
+                            .strip_prefix("root:")
+                            .unwrap_or(&self.identity_address)
+                            .chars()
+                            .take(4)
+                            .collect::<String>()
+                    );
                     self.pending_alias_change = Some(new_alias.clone());
                     self.status_message = format!("Alias changed to: {}", self.handle);
                 } else {
@@ -599,7 +622,17 @@ impl App {
             "alias-gen" => {
                 let new_alias = crate::crypto::alias::generate_alias();
                 self.alias = new_alias.clone();
-                self.handle = format!("{}#{}", new_alias, &self.identity_address.strip_prefix("root:").unwrap_or(&self.identity_address).chars().take(4).collect::<String>());
+                self.handle = format!(
+                    "{}#{}",
+                    new_alias,
+                    &self
+                        .identity_address
+                        .strip_prefix("root:")
+                        .unwrap_or(&self.identity_address)
+                        .chars()
+                        .take(4)
+                        .collect::<String>()
+                );
                 self.pending_alias_change = Some(new_alias.clone());
                 self.status_message = format!("Generated new alias: {}", self.handle);
             }

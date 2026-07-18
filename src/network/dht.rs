@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 const K: usize = 20; // max peers per bucket
@@ -34,8 +34,8 @@ impl NodeId {
 
     pub fn distance(&self, other: &NodeId) -> [u8; 32] {
         let mut dist = [0u8; 32];
-        for i in 0..32 {
-            dist[i] = self.0[i] ^ other.0[i];
+        for (i, byte) in dist.iter_mut().enumerate() {
+            *byte = self.0[i] ^ other.0[i];
         }
         dist
     }
@@ -52,7 +52,11 @@ impl NodeId {
     pub fn bucket_index(&self, other: &NodeId) -> usize {
         let dist = self.distance(other);
         let lz = Self::leading_zeros(&dist);
-        if lz >= KEY_BITS { KEY_BITS - 1 } else { KEY_BITS - 1 - lz }
+        if lz >= KEY_BITS {
+            KEY_BITS - 1
+        } else {
+            KEY_BITS - 1 - lz
+        }
     }
 }
 
@@ -192,7 +196,7 @@ impl DhtStorage {
     }
 
     pub fn store(&mut self, key: &NodeId, value: DhtValue) {
-        let entry = self.data.entry(key.0).or_insert_with(Vec::new);
+        let entry = self.data.entry(key.0).or_default();
         entry.push(value);
 
         // Evict oldest entries if over capacity
@@ -206,7 +210,8 @@ impl DhtStorage {
     }
 
     pub fn get_for_recipient(&self, recipient_hash: &[u8; 32]) -> Vec<DhtValue> {
-        self.data.values()
+        self.data
+            .values()
             .flatten()
             .filter(|v| match v {
                 DhtValue::DirectMessage(dm) => &dm.recipient_hash == recipient_hash,
@@ -250,7 +255,8 @@ impl DhtStorage {
     }
 
     fn oldest_timestamp(&self, key: &[u8; 32]) -> DateTime<Utc> {
-        self.data.get(key)
+        self.data
+            .get(key)
             .and_then(|values| values.first())
             .map(|v| match v {
                 DhtValue::Post(p) => p.timestamp,
