@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,6 +11,7 @@ pub struct Community {
     pub members: HashSet<String>,
     pub is_locked: bool,
     pub invite_only: bool,
+    pub pending_requests: Vec<String>,
 }
 
 impl Community {
@@ -34,14 +36,50 @@ impl Community {
             members,
             is_locked: locked,
             invite_only: locked,
+            pending_requests: Vec::new(),
         }
     }
 
-    pub fn add_member(&mut self, address: &str) -> bool {
-        if self.is_locked && !self.members.contains(address) {
+    pub fn request_join(&mut self, address: &str) -> JoinResult {
+        if self.members.contains(address) {
+            return JoinResult::AlreadyMember;
+        }
+        if self.is_locked {
+            if self.pending_requests.contains(&address.to_string()) {
+                JoinResult::AlreadyPending
+            } else {
+                self.pending_requests.push(address.to_string());
+                JoinResult::Pending
+            }
+        } else {
+            self.members.insert(address.to_string());
+            JoinResult::Joined
+        }
+    }
+
+    pub fn approve_request(&mut self, address: &str, requester: &str) -> bool {
+        if requester != self.owner {
             return false;
         }
-        self.members.insert(address.to_string())
+        if let Some(pos) = self.pending_requests.iter().position(|a| a == address) {
+            self.pending_requests.remove(pos);
+            self.members.insert(address.to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn decline_request(&mut self, address: &str, requester: &str) -> bool {
+        if requester != self.owner {
+            return false;
+        }
+        if let Some(pos) = self.pending_requests.iter().position(|a| a == address) {
+            self.pending_requests.remove(pos);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn remove_member(&mut self, address: &str, requester: &str) -> bool {
@@ -56,4 +94,10 @@ impl Community {
     }
 }
 
-use sha2::Digest;
+#[derive(Debug, PartialEq)]
+pub enum JoinResult {
+    Joined,
+    Pending,
+    AlreadyMember,
+    AlreadyPending,
+}

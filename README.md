@@ -36,8 +36,9 @@ Every message is cryptographically signed — tampered messages are rejected by 
 - Nothing to take down, nothing to subpoena
 
 ### Communities
-- Open (anyone can join) or locked (invite-only)
-- Owner-controlled membership
+- Open (anyone can join) or private (owner approval required)
+- Owner-controlled membership with interactive approve/decline flow
+- Join requests queue up for private communities — owners navigate and act on each
 - No moderation from above — communities self-govern
 
 ## Install & Run
@@ -94,7 +95,9 @@ This removes the binary and all local data (`~/.root-chat`).
 | `s` | Bookmark / unbookmark post |
 | `x` | Delete your post |
 | `g` | Go to post (from bookmarks) |
-| `Enter` | Expand/collapse replies |
+| `a` | Approve pending request (community detail) |
+| `x` | Decline pending request (community detail) |
+| `Enter` | Expand/collapse replies, open community |
 | `Shift+Enter` | New line while composing |
 | `/` | Search users |
 | `:` | Command mode |
@@ -107,6 +110,9 @@ This removes the binary and all local data (`~/.root-chat`).
 - `:alias <name>` — Set your alias manually
 - `:alias-gen` — Generate a random alias
 - `:search <query>` — Search users by alias or address
+- `:create <name>` — Create an open community
+- `:create <name> private` — Create a private community (approval required)
+- `:join <id>` — Join a community (or request to join if private)
 - `:quit` — Exit
 
 ## Identity & Aliases
@@ -169,7 +175,7 @@ src/
 - [x] Threaded replies with collapse/expand
 - [x] Alias system with disambiguation
 - [ ] Media attachments (encrypted)
-- [ ] Community invites and moderation tools
+- [x] Community creation, join requests, and owner approval flow
 - [ ] Bootstrap node list / peer discovery service
 - [ ] Mobile client
 - [ ] Onion-routed file sharing

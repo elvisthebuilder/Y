@@ -1,3 +1,4 @@
+use crate::community::{Community, JoinResult};
 use crate::protocol::message::{Message, MessageContent, Nod, PostMessage, ReplyMessage};
 use chrono::Utc;
 use rand;
@@ -22,6 +23,7 @@ pub enum View {
     Search,
     Bookmarks,
     Thread,
+    CommunityDetail,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +64,9 @@ pub struct App {
     pub thread_replies: Vec<Message>,
     pub expanded_threads: HashSet<String>,
     pub max_visible_replies: usize,
+    pub communities: Vec<Community>,
+    pub selected_community: Option<usize>,
+    pub selected_list_item: usize,
 }
 
 impl App {
@@ -95,6 +100,9 @@ impl App {
             thread_replies: Vec::new(),
             expanded_threads: HashSet::new(),
             max_visible_replies: 2,
+            communities: Vec::new(),
+            selected_community: None,
+            selected_list_item: 0,
         }
     }
 
@@ -112,6 +120,14 @@ impl App {
                 .unwrap_or(0);
             self.input_buffer.remove(prev);
             self.cursor_pos = prev;
+        } else if matches!(
+            self.input_mode,
+            InputMode::Command | InputMode::SearchInput | InputMode::Replying
+        ) {
+            self.input_mode = InputMode::Normal;
+            if matches!(self.view, View::Search) {
+                self.view = View::Timeline;
+            }
         }
     }
 
@@ -267,6 +283,8 @@ impl App {
                 'c' => {
                     self.view = View::Communities;
                     self.scroll_offset = 0;
+                    self.selected_list_item = 0;
+                    self.selected_community = None;
                 }
                 'p' => {
                     self.view = View::Profile;
@@ -309,11 +327,31 @@ impl App {
                 'g' => {
                     self.goto_post_in_timeline();
                 }
-                'x' => {
+                'x' if self.view != View::CommunityDetail => {
                     self.prompt_delete();
                 }
-                '\n' => {
-                    self.open_thread();
+                '\n' => match self.view {
+                    View::Communities => {
+                        if !self.communities.is_empty() {
+                            self.selected_community = Some(self.selected_list_item);
+                            self.view = View::CommunityDetail;
+                            self.selected_list_item = 0;
+                        }
+                    }
+                    _ => {
+                        self.open_thread();
+                    }
+                },
+                '\x1b' if self.view == View::CommunityDetail => {
+                    self.view = View::Communities;
+                    self.selected_list_item = self.selected_community.unwrap_or(0);
+                    self.selected_community = None;
+                }
+                'a' if self.view == View::CommunityDetail => {
+                    self.approve_selected_request();
+                }
+                'x' if self.view == View::CommunityDetail => {
+                    self.decline_selected_request();
                 }
                 ':' => {
                     self.input_mode = InputMode::Command;
@@ -326,6 +364,17 @@ impl App {
                             self.selected_post += 1;
                         }
                     }
+                    View::Communities => {
+                        if self.selected_list_item + 1 < self.communities.len() {
+                            self.selected_list_item += 1;
+                        }
+                    }
+                    View::CommunityDetail => {
+                        let max = self.community_detail_item_count();
+                        if self.selected_list_item + 1 < max {
+                            self.selected_list_item += 1;
+                        }
+                    }
                     _ => {
                         self.scroll_offset = self.scroll_offset.saturating_add(1);
                     }
@@ -333,6 +382,9 @@ impl App {
                 'k' => match self.view {
                     View::Timeline | View::Bookmarks => {
                         self.selected_post = self.selected_post.saturating_sub(1);
+                    }
+                    View::Communities | View::CommunityDetail => {
+                        self.selected_list_item = self.selected_list_item.saturating_sub(1);
                     }
                     _ => {
                         self.scroll_offset = self.scroll_offset.saturating_sub(1);
@@ -633,6 +685,64 @@ impl App {
                 self.pending_alias_change = Some(new_alias.clone());
                 self.status_message = format!("Generated new alias: {}", self.handle);
             }
+            "create" => {
+                if parts.len() > 1 {
+                    let args: Vec<&str> = parts[1].splitn(2, ' ').collect();
+                    let name = args[0].to_string();
+                    let is_private = args.len() > 1 && args[1].eq_ignore_ascii_case("private");
+                    if self.communities.iter().any(|c| c.name == name) {
+                        self.status_message = format!("Community '{}' already exists.", name);
+                    } else {
+                        let label = if is_private { "private" } else { "open" };
+                        let community = Community::new(
+                            name.clone(),
+                            String::new(),
+                            self.identity_address.clone(),
+                            is_private,
+                        );
+                        self.status_message =
+                            format!("Created {} community '{}' ({})", label, name, community.id);
+                        self.communities.push(community);
+                        self.view = View::Communities;
+                        self.selected_list_item = self.communities.len() - 1;
+                    }
+                } else {
+                    self.status_message = "Usage: :create <name> or :create <name> private".into();
+                }
+            }
+            "join" => {
+                if parts.len() > 1 {
+                    let id = parts[1].to_string();
+                    let addr = self.identity_address.clone();
+                    if let Some(community) = self.communities.iter_mut().find(|c| c.id == id) {
+                        match community.request_join(&addr) {
+                            JoinResult::Joined => {
+                                self.status_message =
+                                    format!("Joined community '{}'.", community.name);
+                            }
+                            JoinResult::Pending => {
+                                self.status_message = format!(
+                                    "Join request sent for '{}'. Waiting for owner approval.",
+                                    community.name
+                                );
+                            }
+                            JoinResult::AlreadyMember => {
+                                self.status_message =
+                                    format!("Already a member of '{}'.", community.name);
+                            }
+                            JoinResult::AlreadyPending => {
+                                self.status_message =
+                                    format!("Request already pending for '{}'.", community.name);
+                            }
+                        }
+                    } else {
+                        self.status_message = format!("Community '{}' not found.", id);
+                    }
+                    self.view = View::Communities;
+                } else {
+                    self.status_message = "Usage: :join <id>".into();
+                }
+            }
             "search" => {
                 if parts.len() > 1 {
                     self.view = View::Search;
@@ -643,5 +753,87 @@ impl App {
             }
             _ => self.status_message = format!("Unknown command: {}", cmd),
         }
+    }
+
+    fn community_detail_item_count(&self) -> usize {
+        if let Some(idx) = self.selected_community {
+            if let Some(community) = self.communities.get(idx) {
+                let is_owner = community.owner == self.identity_address;
+                let requests = if is_owner {
+                    community.pending_requests.len()
+                } else {
+                    0
+                };
+                let members = community.members.len();
+                return requests + members;
+            }
+        }
+        0
+    }
+
+    fn approve_selected_request(&mut self) {
+        let idx = match self.selected_community {
+            Some(i) => i,
+            None => return,
+        };
+        let owner = self.identity_address.clone();
+        let community = match self.communities.get(idx) {
+            Some(c) => c,
+            None => return,
+        };
+        if community.owner != owner {
+            self.status_message = "Only the owner can approve requests.".into();
+            return;
+        }
+        let request_count = community.pending_requests.len();
+        if self.selected_list_item >= request_count {
+            self.status_message = "No request selected.".into();
+            return;
+        }
+        let address = community.pending_requests[self.selected_list_item].clone();
+        let community = &mut self.communities[idx];
+        community.approve_request(&address, &owner);
+        self.status_message = format!("Approved {}.", truncate_address(&address));
+        let max = self.community_detail_item_count();
+        if self.selected_list_item >= max && max > 0 {
+            self.selected_list_item = max - 1;
+        }
+    }
+
+    fn decline_selected_request(&mut self) {
+        let idx = match self.selected_community {
+            Some(i) => i,
+            None => return,
+        };
+        let owner = self.identity_address.clone();
+        let community = match self.communities.get(idx) {
+            Some(c) => c,
+            None => return,
+        };
+        if community.owner != owner {
+            self.status_message = "Only the owner can decline requests.".into();
+            return;
+        }
+        let request_count = community.pending_requests.len();
+        if self.selected_list_item >= request_count {
+            self.status_message = "No request selected.".into();
+            return;
+        }
+        let address = community.pending_requests[self.selected_list_item].clone();
+        let community = &mut self.communities[idx];
+        community.decline_request(&address, &owner);
+        self.status_message = format!("Declined {}.", truncate_address(&address));
+        let max = self.community_detail_item_count();
+        if self.selected_list_item >= max && max > 0 {
+            self.selected_list_item = max - 1;
+        }
+    }
+}
+
+fn truncate_address(addr: &str) -> String {
+    if addr.len() > 20 {
+        format!("{}...{}", &addr[..10], &addr[addr.len() - 6..])
+    } else {
+        addr.to_string()
     }
 }
