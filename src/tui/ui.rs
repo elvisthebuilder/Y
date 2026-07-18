@@ -73,7 +73,7 @@ fn draw_post_list(frame: &mut Frame, app: &App, posts: &[crate::protocol::messag
             Style::default().fg(DIM),
         ))]
     } else {
-        posts.iter().enumerate().map(|(i, msg)| {
+        posts.iter().enumerate().flat_map(|(i, msg)| {
             let is_selected = i == app.selected_post;
             let text = match &msg.content {
                 MessageContent::Post(p) => p.text.clone(),
@@ -87,33 +87,63 @@ fn draw_post_list(frame: &mut Frame, app: &App, posts: &[crate::protocol::messag
                 msg.author.clone()
             };
 
-            let nod_str = if msg.nod_count() > 0 {
-                format!(" [{}N]", msg.nod_count())
-            } else {
-                String::new()
-            };
-
-            let reply_str = if msg.reply_count() > 0 {
-                format!(" [{}R]", msg.reply_count())
-            } else {
-                String::new()
-            };
-
             let prefix = if is_selected { "> " } else { "  " };
-            let formatted = format!("{}{} {}{}{}", prefix, author_display, text, nod_str, reply_str);
 
-            let style = if is_selected {
+            // Line 1: author + content
+            let header_line = format!("{}{}", prefix, author_display);
+            let header_style = if is_selected {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
                 Style::default().fg(ACCENT)
+            };
+
+            // Line 2: post text
+            let content_line = format!("{}  {}", if is_selected { "  " } else { "  " }, text);
+            let content_style = if is_selected {
+                Style::default()
             } else {
                 Style::default()
             };
 
-            ListItem::new(Span::styled(formatted, style))
+            // Line 3: nods, replies, bookmark status
+            let is_bookmarked = app.bookmarks.iter().any(|b| b.id == msg.id);
+            let nods = if msg.nod_count() > 0 {
+                format!("{} nods", msg.nod_count())
+            } else {
+                "0 nods".into()
+            };
+            let replies = if msg.reply_count() > 0 {
+                format!("{} replies", msg.reply_count())
+            } else {
+                "0 replies".into()
+            };
+            let bookmark_indicator = if is_bookmarked { " [saved]" } else { "" };
+            let meta_line = format!("    {} | {}{}", nods, replies, bookmark_indicator);
+
+            vec![
+                ListItem::new(Span::styled(header_line, header_style)),
+                ListItem::new(Span::styled(content_line, content_style)),
+                ListItem::new(Span::styled(meta_line, Style::default().fg(DIM))),
+                ListItem::new(Span::raw("")), // spacing between posts
+            ]
         }).collect()
     };
 
+    // Each post takes 4 lines (header, content, meta, blank).
+    // Scroll so the selected post is visible in the area.
+    let lines_per_post = 4;
+    let visible_lines = area.height.saturating_sub(2) as usize; // minus borders
+    let selected_line = app.selected_post * lines_per_post;
+    let scroll_offset = if selected_line >= visible_lines {
+        selected_line - visible_lines + lines_per_post
+    } else {
+        0
+    };
+
+    let items_to_show: Vec<ListItem> = items.into_iter().skip(scroll_offset).collect();
+
     let help = " [.]=nod [r]=reply [s]=bookmark [Enter]=thread ";
-    let list = List::new(items)
+    let list = List::new(items_to_show)
         .block(Block::default()
             .title(title)
             .title_bottom(Line::from(Span::styled(help, Style::default().fg(DIM))))
@@ -158,15 +188,17 @@ fn draw_thread(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let block = Paragraph::new(lines)
+        .scroll((app.scroll_offset as u16, 0))
         .block(Block::default()
-            .title(" Thread (Esc to go back) ")
+            .title(" Thread (Esc to go back, j/k to scroll) ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(DIM)));
     frame.render_widget(block, area);
 }
 
-fn draw_dms(frame: &mut Frame, _app: &App, area: Rect) {
+fn draw_dms(frame: &mut Frame, app: &App, area: Rect) {
     let block = Paragraph::new("  End-to-end encrypted. No one else can read these.")
+        .scroll((app.scroll_offset as u16, 0))
         .style(Style::default().fg(DIM))
         .block(Block::default()
             .title(" Direct Messages ")
@@ -175,8 +207,9 @@ fn draw_dms(frame: &mut Frame, _app: &App, area: Rect) {
     frame.render_widget(block, area);
 }
 
-fn draw_communities(frame: &mut Frame, _app: &App, area: Rect) {
+fn draw_communities(frame: &mut Frame, app: &App, area: Rect) {
     let block = Paragraph::new("  No communities joined. Use :join <id> to join one.")
+        .scroll((app.scroll_offset as u16, 0))
         .style(Style::default().fg(DIM))
         .block(Block::default()
             .title(" Communities ")
@@ -224,6 +257,7 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     let block = Paragraph::new(info)
+        .scroll((app.scroll_offset as u16, 0))
         .block(Block::default()
             .title(" Identity ")
             .borders(Borders::ALL)

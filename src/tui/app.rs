@@ -94,13 +94,14 @@ impl App {
         match self.input_mode {
             InputMode::Normal => match key {
                 'q' => self.should_quit = true,
-                't' => { self.view = View::Timeline; self.selected_post = 0; }
-                'd' => self.view = View::DirectMessages,
-                'c' => self.view = View::Communities,
-                'p' => self.view = View::Profile,
+                't' => { self.view = View::Timeline; self.selected_post = 0; self.scroll_offset = 0; }
+                'd' => { self.view = View::DirectMessages; self.scroll_offset = 0; }
+                'c' => { self.view = View::Communities; self.scroll_offset = 0; }
+                'p' => { self.view = View::Profile; self.scroll_offset = 0; }
                 'b' => {
                     self.view = View::Bookmarks;
                     self.selected_post = 0;
+                    self.scroll_offset = 0;
                 }
                 '/' => {
                     self.view = View::Search;
@@ -133,16 +134,30 @@ impl App {
                     self.input_buffer.clear();
                 }
                 'j' => {
-                    let max = match self.view {
-                        View::Bookmarks => self.bookmarks.len(),
-                        _ => self.timeline.len(),
-                    };
-                    if self.selected_post + 1 < max {
-                        self.selected_post += 1;
+                    match self.view {
+                        View::Timeline | View::Bookmarks => {
+                            let max = match self.view {
+                                View::Bookmarks => self.bookmarks.len(),
+                                _ => self.timeline.len(),
+                            };
+                            if self.selected_post + 1 < max {
+                                self.selected_post += 1;
+                            }
+                        }
+                        _ => {
+                            self.scroll_offset = self.scroll_offset.saturating_add(1);
+                        }
                     }
                 }
                 'k' => {
-                    self.selected_post = self.selected_post.saturating_sub(1);
+                    match self.view {
+                        View::Timeline | View::Bookmarks => {
+                            self.selected_post = self.selected_post.saturating_sub(1);
+                        }
+                        _ => {
+                            self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                        }
+                    }
                 }
                 _ => {}
             },
