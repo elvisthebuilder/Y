@@ -1,0 +1,79 @@
+use base64::Engine;
+use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
+use rand::rngs::OsRng;
+use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
+use anyhow::Result;
+
+#[derive(Clone)]
+pub struct Identity {
+    signing_key: SigningKey,
+    pub verifying_key: VerifyingKey,
+    pub address: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicIdentity {
+    pub address: String,
+    pub verifying_key_bytes: [u8; 32],
+    pub display_name: Option<String>,
+}
+
+impl Identity {
+    pub fn generate() -> Self {
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+        let address = Self::derive_address(&verifying_key);
+
+        Self {
+            signing_key,
+            verifying_key,
+            address,
+        }
+    }
+
+    pub fn from_bytes(secret: &[u8; 32]) -> Self {
+        let signing_key = SigningKey::from_bytes(secret);
+        let verifying_key = signing_key.verifying_key();
+        let address = Self::derive_address(&verifying_key);
+
+        Self {
+            signing_key,
+            verifying_key,
+            address,
+        }
+    }
+
+    pub fn sign(&self, message: &[u8]) -> Signature {
+        self.signing_key.sign(message)
+    }
+
+    pub fn verify(verifying_key: &VerifyingKey, message: &[u8], signature: &Signature) -> bool {
+        verifying_key.verify(message, signature).is_ok()
+    }
+
+    pub fn public_identity(&self) -> PublicIdentity {
+        PublicIdentity {
+            address: self.address.clone(),
+            verifying_key_bytes: self.verifying_key.to_bytes(),
+            display_name: None,
+        }
+    }
+
+    pub fn secret_bytes(&self) -> &[u8; 32] {
+        self.signing_key.as_bytes()
+    }
+
+    fn derive_address(key: &VerifyingKey) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(key.as_bytes());
+        let hash = hasher.finalize();
+        format!("root:{}", &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&hash[..16]))
+    }
+}
+
+impl PublicIdentity {
+    pub fn verifying_key(&self) -> Result<VerifyingKey> {
+        Ok(VerifyingKey::from_bytes(&self.verifying_key_bytes)?)
+    }
+}
