@@ -604,8 +604,7 @@ impl App {
                     self.handle = format!(
                         "{}#{}",
                         new_alias,
-                        &self
-                            .identity_address
+                        self.identity_address
                             .strip_prefix("root:")
                             .unwrap_or(&self.identity_address)
                             .chars()
@@ -624,8 +623,7 @@ impl App {
                 self.handle = format!(
                     "{}#{}",
                     new_alias,
-                    &self
-                        .identity_address
+                    self.identity_address
                         .strip_prefix("root:")
                         .unwrap_or(&self.identity_address)
                         .chars()

@@ -80,7 +80,7 @@ impl Identity {
         let hash = hasher.finalize();
         format!(
             "root:{}",
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&hash[..16])
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&hash[..16])
         )
     }
 }
