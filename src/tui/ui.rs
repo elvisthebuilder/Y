@@ -427,10 +427,7 @@ fn truncate_onion(msg: &str) -> String {
     if let Some(pos) = msg.find(".onion") {
         let before_onion = &msg[..pos];
         // Find start of the onion address (after last space or colon)
-        let addr_start = before_onion
-            .rfind([' ', ':'])
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let addr_start = before_onion.rfind([' ', ':']).map(|i| i + 1).unwrap_or(0);
         let onion_addr = &msg[addr_start..];
         if onion_addr.len() > 20 {
             let prefix = &msg[..addr_start];

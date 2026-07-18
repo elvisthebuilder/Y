@@ -296,11 +296,10 @@ impl App {
                     self.input_mode = InputMode::Editing;
                     self.clear_input();
                 }
-                'r'
-                    if self.selected_message_id().is_some() => {
-                        self.input_mode = InputMode::Replying;
-                        self.clear_input();
-                    }
+                'r' if self.selected_message_id().is_some() => {
+                    self.input_mode = InputMode::Replying;
+                    self.clear_input();
+                }
                 '.' => {
                     self.nod_selected();
                 }
