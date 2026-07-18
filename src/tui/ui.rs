@@ -10,8 +10,8 @@ use super::app::{App, InputMode, View};
 use crate::protocol::message::MessageContent;
 
 const ACCENT: Color = Color::Green;
+const REPLY_COLOR: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
-const NOD_COLOR: Color = Color::Yellow;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -62,22 +62,64 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
         View::Compose => draw_compose(frame, app, area),
         View::Search => draw_search(frame, app, area),
         View::Bookmarks => draw_post_list(frame, app, &app.bookmarks, " Bookmarks ", area),
-        View::Thread => draw_thread(frame, app, area),
+        View::Thread => draw_post_list(frame, app, &app.timeline, " Thread ", area),
     }
 }
 
-fn draw_post_list(frame: &mut Frame, app: &App, posts: &[crate::protocol::message::Message], title: &str, area: Rect) {
-    let items: Vec<ListItem> = if posts.is_empty() {
+fn draw_post_list(frame: &mut Frame, app: &App, _posts: &[crate::protocol::message::Message], title: &str, area: Rect) {
+    let entries = app.visible_entries();
+
+    let items: Vec<ListItem> = if entries.is_empty() {
         vec![ListItem::new(Span::styled(
             "  No posts. Press 'n' to compose.",
             Style::default().fg(DIM),
         ))]
     } else {
-        posts.iter().enumerate().flat_map(|(i, msg)| {
+        entries.iter().enumerate().flat_map(|(i, entry)| {
             let is_selected = i == app.selected_post;
+            let depth = entry.depth;
+
+            // Build the thread line prefix for this depth
+            let mut tree_prefix = String::new();
+            for d in 0..depth {
+                if d < entry.ancestors_continuing.len() && entry.ancestors_continuing[d] {
+                    tree_prefix.push_str("│  ");
+                } else {
+                    tree_prefix.push_str("   ");
+                }
+            }
+
+            // The connector for this node
+            let connector = if depth > 0 {
+                if entry.is_last_sibling {
+                    "└─ "
+                } else {
+                    "├─ "
+                }
+            } else {
+                ""
+            };
+
+            if entry.is_collapse_marker {
+                let line = format!(
+                    "  {}{}Show {} more replies...",
+                    tree_prefix, connector, entry.hidden_count
+                );
+                let style = if is_selected {
+                    Style::default().fg(ACCENT)
+                } else {
+                    Style::default().fg(DIM)
+                };
+                return vec![
+                    ListItem::new(Span::styled(line, style)),
+                    ListItem::new(Span::raw("")),
+                ];
+            }
+
+            let msg = entry.message;
             let text = match &msg.content {
                 MessageContent::Post(p) => p.text.clone(),
-                MessageContent::Reply(r) => format!("-> {}", r.text),
+                MessageContent::Reply(r) => r.text.clone(),
                 _ => "(other)".into(),
             };
 
@@ -87,62 +129,98 @@ fn draw_post_list(frame: &mut Frame, app: &App, posts: &[crate::protocol::messag
                 msg.author.clone()
             };
 
-            let prefix = if is_selected { "> " } else { "  " };
+            let select_marker = if is_selected { ">" } else { " " };
 
-            // Line 1: author + content
-            let header_line = format!("{}{}", prefix, author_display);
+            // Line 1: tree + author
+            let is_reply = depth > 0;
+            let header_line = format!(
+                "{} {}{}{}",
+                select_marker, tree_prefix, connector, author_display
+            );
+            let base_color = if is_reply { REPLY_COLOR } else { ACCENT };
             let header_style = if is_selected {
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                Style::default().fg(base_color).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(ACCENT)
+                Style::default().fg(base_color)
             };
 
-            // Line 2: post text
-            let content_line = format!("{}  {}", if is_selected { "  " } else { "  " }, text);
-            let content_style = if is_selected {
-                Style::default()
+            // Continuation prefix for lines under this node
+            let continuation = if depth > 0 {
+                let mut c = String::from("  ");
+                for d in 0..depth {
+                    if d < entry.ancestors_continuing.len() && entry.ancestors_continuing[d] {
+                        c.push_str("│  ");
+                    } else {
+                        c.push_str("   ");
+                    }
+                }
+                c.push_str("   ");
+                c
+            } else {
+                "    ".to_string()
+            };
+
+            // Line 2: content
+            let content_line = format!("{}{}", continuation, text);
+            let content_style = if is_reply {
+                Style::default().fg(REPLY_COLOR)
             } else {
                 Style::default()
             };
 
-            // Line 3: nods, replies, bookmark status
+            // Line 3: meta (with proper singular/plural)
             let is_bookmarked = app.bookmarks.iter().any(|b| b.id == msg.id);
-            let nods = if msg.nod_count() > 0 {
-                format!("{} nods", msg.nod_count())
+            let nod_count = msg.nod_count();
+            let reply_count = msg.reply_count();
+            let nods = if nod_count == 1 {
+                "1 nod".to_string()
             } else {
-                "0 nods".into()
+                format!("{} nods", nod_count)
             };
-            let replies = if msg.reply_count() > 0 {
-                format!("{} replies", msg.reply_count())
+            let replies = if reply_count == 1 {
+                "1 reply".to_string()
             } else {
-                "0 replies".into()
+                format!("{} replies", reply_count)
             };
             let bookmark_indicator = if is_bookmarked { " [saved]" } else { "" };
-            let meta_line = format!("    {} | {}{}", nods, replies, bookmark_indicator);
+            let meta_line = format!("{}{} | {}{}", continuation, nods, replies, bookmark_indicator);
 
-            vec![
+            let mut lines = vec![
                 ListItem::new(Span::styled(header_line, header_style)),
                 ListItem::new(Span::styled(content_line, content_style)),
                 ListItem::new(Span::styled(meta_line, Style::default().fg(DIM))),
-                ListItem::new(Span::raw("")), // spacing between posts
-            ]
+            ];
+
+            // Add thread continuation line if this post has visible replies
+            let has_replies = !entry.is_collapse_marker && msg.reply_count() > 0;
+            if has_replies && depth == 0 {
+                let thread_line = format!("  │");
+                lines.push(ListItem::new(Span::styled(thread_line, Style::default().fg(DIM))));
+            } else {
+                lines.push(ListItem::new(Span::raw("")));
+            }
+
+            lines
         }).collect()
     };
 
-    // Each post takes 4 lines (header, content, meta, blank).
-    // Scroll so the selected post is visible in the area.
-    let lines_per_post = 4;
-    let visible_lines = area.height.saturating_sub(2) as usize; // minus borders
-    let selected_line = app.selected_post * lines_per_post;
+    // Scroll to keep selection visible
+    let lines_per_entry = 4;
+    let visible_lines = area.height.saturating_sub(2) as usize;
+    let selected_line = app.selected_post * lines_per_entry;
     let scroll_offset = if selected_line >= visible_lines {
-        selected_line - visible_lines + lines_per_post
+        selected_line - visible_lines + lines_per_entry
     } else {
         0
     };
 
     let items_to_show: Vec<ListItem> = items.into_iter().skip(scroll_offset).collect();
 
-    let help = " [.]=nod [r]=reply [s]=bookmark [Enter]=thread ";
+    let help = if app.view == View::Bookmarks {
+        " [.]=nod [r]=reply [s]=unsave [g]=go to [x]=delete [Enter]=expand "
+    } else {
+        " [.]=nod [r]=reply [s]=save [x]=delete [Enter]=expand/collapse "
+    };
     let list = List::new(items_to_show)
         .block(Block::default()
             .title(title)
@@ -153,48 +231,6 @@ fn draw_post_list(frame: &mut Frame, app: &App, posts: &[crate::protocol::messag
     frame.render_widget(list, area);
 }
 
-fn draw_thread(frame: &mut Frame, app: &App, area: Rect) {
-    let mut lines: Vec<Line> = Vec::new();
-
-    if let Some(parent) = app.timeline.get(app.selected_post) {
-        let text = match &parent.content {
-            MessageContent::Post(p) => p.text.clone(),
-            MessageContent::Reply(r) => r.text.clone(),
-            _ => "(other)".into(),
-        };
-        let header = format!("{} {}", parent.author, text);
-        lines.push(Line::from(Span::styled(header, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))));
-        lines.push(Line::from(Span::styled(
-            format!("  {} nods | {} replies", parent.nod_count(), parent.reply_count()),
-            Style::default().fg(DIM),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("--- replies ---", Style::default().fg(DIM))));
-        lines.push(Line::from(""));
-    }
-
-    for reply in &app.thread_replies {
-        let text = match &reply.content {
-            MessageContent::Reply(r) => r.text.clone(),
-            MessageContent::Post(p) => p.text.clone(),
-            _ => "(other)".into(),
-        };
-        let line_str = format!("  {}: {}", reply.author, text);
-        lines.push(Line::from(Span::styled(line_str, Style::default().fg(ACCENT))));
-    }
-
-    if app.thread_replies.is_empty() {
-        lines.push(Line::from(Span::styled("  No replies yet. Press 'r' to reply.", Style::default().fg(DIM))));
-    }
-
-    let block = Paragraph::new(lines)
-        .scroll((app.scroll_offset as u16, 0))
-        .block(Block::default()
-            .title(" Thread (Esc to go back, j/k to scroll) ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(DIM)));
-    frame.render_widget(block, area);
-}
 
 fn draw_dms(frame: &mut Frame, app: &App, area: Rect) {
     let block = Paragraph::new("  End-to-end encrypted. No one else can read these.")
@@ -266,36 +302,58 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_compose(frame: &mut Frame, app: &App, area: Rect) {
+    let title = " Compose (Esc=cancel, Enter=post, Shift+Enter=new line) ";
     let block = Paragraph::new(app.input_buffer.as_str())
         .block(Block::default()
-            .title(" Compose (Esc to cancel, Enter to post) ")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(ACCENT)));
     frame.render_widget(block, area);
+
+    // Position cursor in multiline text
+    let text_before_cursor = &app.input_buffer[..app.cursor_pos];
+    let line_num = text_before_cursor.matches('\n').count();
+    let col = text_before_cursor.rfind('\n')
+        .map(|pos| app.cursor_pos - pos - 1)
+        .unwrap_or(app.cursor_pos);
+    frame.set_cursor_position((
+        area.x + 1 + col as u16,
+        area.y + 1 + line_num as u16,
+    ));
 }
 
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
-    let (title, content) = match app.input_mode {
-        InputMode::Normal => ("Normal", String::new()),
-        InputMode::Editing => ("Insert", app.input_buffer.clone()),
-        InputMode::Command => ("Command", format!(":{}", app.input_buffer)),
-        InputMode::SearchInput => ("Search", format!("/{}", app.input_buffer)),
-        InputMode::Replying => ("Reply", app.input_buffer.clone()),
+    let (title, content, cursor_offset) = match app.input_mode {
+        InputMode::Normal => ("Normal", String::new(), 0),
+        InputMode::Editing => ("Insert", app.input_buffer.clone(), app.cursor_pos),
+        InputMode::Command => ("Command", format!(":{}", app.input_buffer), app.cursor_pos + 1),
+        InputMode::SearchInput => ("Search", format!("/{}", app.input_buffer), app.cursor_pos + 1),
+        InputMode::Replying => ("Reply", app.input_buffer.clone(), app.cursor_pos),
+    };
+
+    let border_color = match app.input_mode {
+        InputMode::Normal => DIM,
+        InputMode::Editing => ACCENT,
+        InputMode::Command => Color::Yellow,
+        InputMode::SearchInput => Color::Cyan,
+        InputMode::Replying => Color::Magenta,
     };
 
     let input = Paragraph::new(content)
         .block(Block::default()
             .title(format!(" {} ", title))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(match app.input_mode {
-                InputMode::Normal => DIM,
-                InputMode::Editing => ACCENT,
-                InputMode::Command => Color::Yellow,
-                InputMode::SearchInput => Color::Cyan,
-                InputMode::Replying => Color::Magenta,
-            })));
+            .border_style(Style::default().fg(border_color)));
 
     frame.render_widget(input, area);
+
+    // Place the visible cursor when in an input mode (but not Editing — compose handles its own)
+    if app.input_mode != InputMode::Normal && app.input_mode != InputMode::Editing {
+        frame.set_cursor_position((
+            area.x + 1 + cursor_offset as u16,
+            area.y + 1,
+        ));
+    }
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {

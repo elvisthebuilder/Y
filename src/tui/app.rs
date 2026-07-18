@@ -1,6 +1,16 @@
+use std::collections::HashSet;
 use chrono::Utc;
 use rand;
 use crate::protocol::message::{Message, MessageContent, PostMessage, ReplyMessage, Nod};
+
+pub struct DisplayEntry<'a> {
+    pub message: &'a Message,
+    pub depth: usize,
+    pub is_collapse_marker: bool,
+    pub hidden_count: usize,
+    pub ancestors_continuing: Vec<bool>,
+    pub is_last_sibling: bool,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
@@ -27,6 +37,7 @@ pub struct App {
     pub view: View,
     pub input_mode: InputMode,
     pub input_buffer: String,
+    pub cursor_pos: usize,
     pub timeline: Vec<Message>,
     pub dm_list: Vec<Message>,
     pub bookmarks: Vec<Message>,
@@ -44,7 +55,11 @@ pub struct App {
     pub pending_nod: Option<String>,
     pub pending_bookmark: Option<(String, bool)>,
     pub pending_save: bool,
+    pub pending_deletes: Vec<String>,
+    pub confirm_delete: Option<String>,
     pub thread_replies: Vec<Message>,
+    pub expanded_threads: HashSet<String>,
+    pub max_visible_replies: usize,
 }
 
 impl App {
@@ -53,6 +68,7 @@ impl App {
             view: View::Timeline,
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
+            cursor_pos: 0,
             timeline: Vec::new(),
             dm_list: Vec::new(),
             bookmarks: Vec::new(),
@@ -70,27 +86,167 @@ impl App {
             pending_nod: None,
             pending_bookmark: None,
             pending_save: false,
+            pending_deletes: Vec::new(),
+            confirm_delete: None,
             thread_replies: Vec::new(),
+            expanded_threads: HashSet::new(),
+            max_visible_replies: 2,
         }
     }
 
-    fn selected_message(&self) -> Option<&Message> {
-        let list = match self.view {
+    pub fn insert_char(&mut self, c: char) {
+        self.input_buffer.insert(self.cursor_pos, c);
+        self.cursor_pos += c.len_utf8();
+    }
+
+    pub fn delete_char_before_cursor(&mut self) {
+        if self.cursor_pos > 0 {
+            let prev = self.input_buffer[..self.cursor_pos]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.input_buffer.remove(prev);
+            self.cursor_pos = prev;
+        }
+    }
+
+    pub fn delete_char_at_cursor(&mut self) {
+        if self.cursor_pos < self.input_buffer.len() {
+            self.input_buffer.remove(self.cursor_pos);
+        }
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        if self.cursor_pos > 0 {
+            self.cursor_pos = self.input_buffer[..self.cursor_pos]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        if self.cursor_pos < self.input_buffer.len() {
+            self.cursor_pos = self.input_buffer[self.cursor_pos..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| self.cursor_pos + i)
+                .unwrap_or(self.input_buffer.len());
+        }
+    }
+
+    pub fn move_cursor_home(&mut self) {
+        self.cursor_pos = 0;
+    }
+
+    pub fn move_cursor_end(&mut self) {
+        self.cursor_pos = self.input_buffer.len();
+    }
+
+    pub fn clear_input(&mut self) {
+        self.input_buffer.clear();
+        self.cursor_pos = 0;
+    }
+
+    pub fn visible_entries(&self) -> Vec<DisplayEntry<'_>> {
+        let posts = match self.view {
             View::Bookmarks => &self.bookmarks,
             _ => &self.timeline,
         };
-        list.get(self.selected_post)
+        let top_level: Vec<&Message> = posts.iter()
+            .filter(|m| m.reply_to.is_none())
+            .collect();
+
+        let mut entries = Vec::new();
+        for msg in &top_level {
+            self.build_thread_entries(posts, msg, 0, &mut entries, &[]);
+        }
+        entries
+    }
+
+    fn build_thread_entries<'a>(
+        &self,
+        all_posts: &'a [Message],
+        msg: &'a Message,
+        depth: usize,
+        entries: &mut Vec<DisplayEntry<'a>>,
+        ancestors_continuing: &[bool],
+    ) {
+        entries.push(DisplayEntry {
+            message: msg,
+            depth,
+            is_collapse_marker: false,
+            hidden_count: 0,
+            ancestors_continuing: ancestors_continuing.to_vec(),
+            is_last_sibling: false,
+        });
+
+        let replies: Vec<&Message> = all_posts.iter()
+            .filter(|m| m.reply_to.as_deref() == Some(&msg.id))
+            .collect();
+
+        if replies.is_empty() {
+            return;
+        }
+
+        let is_expanded = self.expanded_threads.contains(&msg.id);
+        if !is_expanded {
+            // Collapsed: show nothing, just add collapse marker
+            entries.push(DisplayEntry {
+                message: msg,
+                depth: depth + 1,
+                is_collapse_marker: true,
+                hidden_count: replies.len(),
+                ancestors_continuing: {
+                    let mut a = ancestors_continuing.to_vec();
+                    a.push(false);
+                    a
+                },
+                is_last_sibling: true,
+            });
+            return;
+        }
+
+        for (i, reply) in replies.iter().enumerate() {
+            let is_last = i == replies.len() - 1;
+            let mut new_ancestors = ancestors_continuing.to_vec();
+            new_ancestors.push(!is_last);
+
+            let idx = entries.len();
+            self.build_thread_entries(all_posts, reply, depth + 1, entries, &new_ancestors);
+            entries[idx].is_last_sibling = is_last;
+        }
+    }
+
+    fn selected_message_id(&self) -> Option<String> {
+        let entries = self.visible_entries();
+        entries.get(self.selected_post).map(|e| e.message.id.clone())
     }
 
     fn selected_message_mut(&mut self) -> Option<&mut Message> {
-        let list = match self.view {
-            View::Bookmarks => &mut self.bookmarks,
-            _ => &mut self.timeline,
-        };
-        list.get_mut(self.selected_post)
+        let id = self.selected_message_id();
+        if let Some(id) = id {
+            self.timeline.iter_mut().find(|m| m.id == id)
+        } else {
+            None
+        }
     }
 
     pub fn handle_key(&mut self, key: char) {
+        // Handle delete confirmation if active
+        if self.confirm_delete.is_some() && self.input_mode == InputMode::Normal {
+            match key {
+                'y' => self.delete_selected_post(),
+                _ => {
+                    self.confirm_delete = None;
+                    self.status_message = "Delete cancelled.".into();
+                }
+            }
+            return;
+        }
+
         match self.input_mode {
             InputMode::Normal => match key {
                 'q' => self.should_quit = true,
@@ -106,18 +262,18 @@ impl App {
                 '/' => {
                     self.view = View::Search;
                     self.input_mode = InputMode::SearchInput;
-                    self.input_buffer.clear();
+                    self.clear_input();
                     self.search_results.clear();
                 }
                 'n' => {
                     self.view = View::Compose;
                     self.input_mode = InputMode::Editing;
-                    self.input_buffer.clear();
+                    self.clear_input();
                 }
                 'r' => {
-                    if self.selected_message().is_some() {
+                    if self.selected_message_id().is_some() {
                         self.input_mode = InputMode::Replying;
-                        self.input_buffer.clear();
+                        self.clear_input();
                     }
                 }
                 '.' => {
@@ -126,20 +282,23 @@ impl App {
                 's' => {
                     self.bookmark_selected();
                 }
+                'g' => {
+                    self.goto_post_in_timeline();
+                }
+                'x' => {
+                    self.prompt_delete();
+                }
                 '\n' => {
                     self.open_thread();
                 }
                 ':' => {
                     self.input_mode = InputMode::Command;
-                    self.input_buffer.clear();
+                    self.clear_input();
                 }
                 'j' => {
                     match self.view {
                         View::Timeline | View::Bookmarks => {
-                            let max = match self.view {
-                                View::Bookmarks => self.bookmarks.len(),
-                                _ => self.timeline.len(),
-                            };
+                            let max = self.visible_entries().len();
                             if self.selected_post + 1 < max {
                                 self.selected_post += 1;
                             }
@@ -185,65 +344,135 @@ impl App {
                         self.pending_post = true;
                         self.status_message = "Post published.".into();
                     }
-                    self.input_buffer.clear();
+                    self.clear_input();
                     self.input_mode = InputMode::Normal;
                     self.view = View::Timeline;
                 }
-                _ => self.input_buffer.push(key),
+                _ => self.insert_char(key),
             },
             InputMode::Replying => match key {
                 '\x1b' => {
                     self.input_mode = InputMode::Normal;
-                    self.input_buffer.clear();
+                    self.clear_input();
                 }
                 '\n' => {
                     self.submit_reply();
-                    self.input_buffer.clear();
+                    self.clear_input();
                     self.input_mode = InputMode::Normal;
                 }
-                _ => self.input_buffer.push(key),
+                _ => self.insert_char(key),
             },
             InputMode::SearchInput => match key {
                 '\x1b' => {
                     self.input_mode = InputMode::Normal;
                     self.view = View::Timeline;
-                    self.input_buffer.clear();
+                    self.clear_input();
                 }
                 '\n' => {
                     self.status_message = format!("Searching for '{}'...", self.input_buffer);
                     self.input_mode = InputMode::Normal;
                 }
-                _ => self.input_buffer.push(key),
+                _ => self.insert_char(key),
             },
             InputMode::Command => match key {
                 '\x1b' => {
                     self.input_mode = InputMode::Normal;
-                    self.input_buffer.clear();
+                    self.clear_input();
                 }
                 '\n' => {
                     self.execute_command();
-                    self.input_buffer.clear();
+                    self.clear_input();
                     self.input_mode = InputMode::Normal;
                 }
-                _ => self.input_buffer.push(key),
+                _ => self.insert_char(key),
             },
         }
     }
 
+    fn goto_post_in_timeline(&mut self) {
+        if self.view != View::Bookmarks {
+            return;
+        }
+        let id = match self.selected_message_id() {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Switch to timeline and find the post in visible entries
+        self.view = View::Timeline;
+        self.scroll_offset = 0;
+
+        let entries = self.visible_entries();
+        if let Some(pos) = entries.iter().position(|e| e.message.id == id) {
+            self.selected_post = pos;
+            self.status_message = "Jumped to post in timeline.".into();
+        } else {
+            self.selected_post = 0;
+            self.status_message = "Post not found in timeline.".into();
+        }
+    }
+
+    fn prompt_delete(&mut self) {
+        let id = match self.selected_message_id() {
+            Some(id) => id,
+            None => return,
+        };
+        if let Some(msg) = self.timeline.iter().find(|m| m.id == id) {
+            if msg.author != self.handle {
+                self.status_message = "You can only delete your own posts.".into();
+                return;
+            }
+        } else {
+            return;
+        }
+        self.confirm_delete = Some(id);
+        self.status_message = "Delete this post? (y to confirm, any other key to cancel)".into();
+    }
+
+    fn delete_selected_post(&mut self) {
+        let id = match self.confirm_delete.take() {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Remove from timeline
+        self.timeline.retain(|m| m.id != id);
+
+        // Also remove any replies to this post
+        self.timeline.retain(|m| m.reply_to.as_deref() != Some(id.as_str()));
+
+        // Remove from bookmarks if bookmarked
+        self.bookmarks.retain(|m| m.id != id);
+
+        // Remove reply reference from parent if this was a reply
+        for msg in &mut self.timeline {
+            msg.replies.retain(|r| r != &id);
+        }
+
+        // Adjust selection
+        let max = self.visible_entries().len();
+        if self.selected_post >= max && max > 0 {
+            self.selected_post = max - 1;
+        }
+
+        self.pending_deletes.push(id);
+        self.pending_save = true;
+        self.status_message = "Post deleted.".into();
+    }
+
     fn nod_selected(&mut self) {
         let handle = self.handle.clone();
-        let list = match self.view {
-            View::Bookmarks => &mut self.bookmarks,
-            _ => &mut self.timeline,
+        let id = match self.selected_message_id() {
+            Some(id) => id,
+            None => return,
         };
-        if let Some(msg) = list.get_mut(self.selected_post) {
+        if let Some(msg) = self.timeline.iter_mut().find(|m| m.id == id) {
             if !msg.has_nodded(&handle) {
                 msg.nods.push(Nod {
                     from: handle,
                     timestamp: Utc::now(),
                 });
                 let count = msg.nod_count();
-                let id = msg.id.clone();
                 self.pending_nod = Some(id);
                 self.pending_save = true;
                 self.status_message = format!("Nodded. ({} nods)", count);
@@ -254,19 +483,20 @@ impl App {
     }
 
     fn bookmark_selected(&mut self) {
-        if let Some(msg) = self.selected_message() {
-            let id = msg.id.clone();
-            let msg_clone = msg.clone();
-            // Toggle bookmark
-            if self.bookmarks.iter().any(|b| b.id == id) {
-                self.bookmarks.retain(|b| b.id != id);
-                self.pending_bookmark = Some((id, false));
-                self.status_message = "Bookmark removed.".into();
-            } else {
-                self.bookmarks.push(msg_clone);
-                self.pending_bookmark = Some((id, true));
-                self.status_message = "Post bookmarked.".into();
+        let id = match self.selected_message_id() {
+            Some(id) => id,
+            None => return,
+        };
+        if self.bookmarks.iter().any(|b| b.id == id) {
+            self.bookmarks.retain(|b| b.id != id);
+            self.pending_bookmark = Some((id, false));
+            self.status_message = "Bookmark removed.".into();
+        } else {
+            if let Some(msg) = self.timeline.iter().find(|m| m.id == id) {
+                self.bookmarks.push(msg.clone());
             }
+            self.pending_bookmark = Some((id, true));
+            self.status_message = "Post bookmarked.".into();
         }
     }
 
@@ -274,50 +504,66 @@ impl App {
         if self.input_buffer.trim().is_empty() {
             return;
         }
-        if let Some(parent) = self.selected_message() {
-            let parent_id = parent.id.clone();
-            let reply = Message {
-                id: format!("{:x}", rand::random::<u64>()),
-                author: self.handle.clone(),
-                content: MessageContent::Reply(ReplyMessage {
-                    parent_id: parent_id.clone(),
-                    text: self.input_buffer.clone(),
-                }),
-                timestamp: Utc::now(),
-                signature: Vec::new(),
-                reply_to: Some(parent_id.clone()),
-                nods: Vec::new(),
-                replies: Vec::new(),
-            };
-            let reply_id = reply.id.clone();
+        let parent_id = match self.selected_message_id() {
+            Some(id) => id,
+            None => return,
+        };
 
-            // Add reply to timeline
-            self.timeline.insert(0, reply);
-            self.pending_post = true;
+        let reply = Message {
+            id: format!("{:x}", rand::random::<u64>()),
+            author: self.handle.clone(),
+            content: MessageContent::Reply(ReplyMessage {
+                parent_id: parent_id.clone(),
+                text: self.input_buffer.clone(),
+            }),
+            timestamp: Utc::now(),
+            signature: Vec::new(),
+            reply_to: Some(parent_id.clone()),
+            nods: Vec::new(),
+            replies: Vec::new(),
+        };
+        let reply_id = reply.id.clone();
 
-            // Track reply on parent
-            if let Some(parent_msg) = self.timeline.iter_mut().find(|m| m.id == parent_id) {
-                parent_msg.replies.push(reply_id);
-                self.pending_save = true;
-            }
+        self.timeline.push(reply);
+        self.pending_post = true;
 
-            self.status_message = "Reply posted.".into();
+        if let Some(parent_msg) = self.timeline.iter_mut().find(|m| m.id == parent_id) {
+            parent_msg.replies.push(reply_id);
+            self.pending_save = true;
         }
+
+        // Auto-expand the thread we just replied to
+        self.expanded_threads.insert(parent_id);
+        self.status_message = "Reply posted.".into();
     }
 
     fn open_thread(&mut self) {
-        if let Some(msg) = self.selected_message() {
-            let parent_id = msg.id.clone();
-            let reply_ids = msg.replies.clone();
-
-            self.thread_replies = self.timeline.iter()
-                .filter(|m| reply_ids.contains(&m.id) || m.reply_to.as_deref() == Some(&parent_id))
-                .cloned()
-                .collect();
-            self.thread_replies.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-            self.view = View::Thread;
+        let entries = self.visible_entries();
+        if let Some(entry) = entries.get(self.selected_post) {
+            if entry.is_collapse_marker {
+                let parent_id = entry.message.id.clone();
+                self.expanded_threads.insert(parent_id);
+                self.status_message = "Thread expanded.".into();
+            } else {
+                let id = entry.message.id.clone();
+                // Check if this post actually has replies in the timeline
+                let has_child_replies = self.timeline.iter()
+                    .any(|m| m.reply_to.as_deref() == Some(id.as_str()));
+                if !has_child_replies {
+                    self.status_message = "No replies to expand.".into();
+                    return;
+                }
+                if self.expanded_threads.contains(&id) {
+                    self.expanded_threads.remove(&id);
+                    self.status_message = "Thread collapsed.".into();
+                } else {
+                    self.expanded_threads.insert(id);
+                    self.status_message = "Thread expanded.".into();
+                }
+            }
         }
     }
+
 
     fn execute_command(&mut self) {
         let cmd = self.input_buffer.trim().to_string();

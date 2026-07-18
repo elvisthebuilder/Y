@@ -56,6 +56,12 @@ impl Storage {
         self.save_message(msg)
     }
 
+    pub fn delete_message(&self, id: &str) -> Result<()> {
+        let key = format!("msg:{}", id);
+        self.db.remove(key.as_bytes())?;
+        Ok(())
+    }
+
     pub fn get_message(&self, id: &str) -> Result<Option<Message>> {
         let key = format!("msg:{}", id);
         match self.db.get(key.as_bytes())? {

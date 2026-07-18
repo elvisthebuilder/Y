@@ -10,7 +10,7 @@ mod community;
 use std::path::PathBuf;
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -88,13 +88,18 @@ async fn main() -> Result<()> {
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
                     match key.code {
                         KeyCode::Char(c) => app.handle_key(c),
+                        KeyCode::Enter if shift => app.insert_char('\n'),
                         KeyCode::Enter => app.handle_key('\n'),
                         KeyCode::Esc => app.handle_key('\x1b'),
-                        KeyCode::Backspace => {
-                            app.input_buffer.pop();
-                        }
+                        KeyCode::Backspace => app.delete_char_before_cursor(),
+                        KeyCode::Delete => app.delete_char_at_cursor(),
+                        KeyCode::Left => app.move_cursor_left(),
+                        KeyCode::Right => app.move_cursor_right(),
+                        KeyCode::Home => app.move_cursor_home(),
+                        KeyCode::End => app.move_cursor_end(),
                         _ => {}
                     }
                 }
@@ -126,8 +131,12 @@ async fn main() -> Result<()> {
             }
         }
 
+        for id in app.pending_deletes.drain(..) {
+            let _ = storage.delete_message(&id);
+            let _ = storage.unbookmark_post(&id);
+        }
+
         if app.pending_save {
-            // Save any modified messages
             for msg in &app.timeline {
                 let _ = storage.save_message(msg);
             }
