@@ -26,10 +26,13 @@ You type → Sign (Ed25519) → Encrypt (if DM) → Send via Tor → Peers verif
 Every message is cryptographically signed — tampered messages are rejected by peers.
 
 ### Network
-- Each user runs a **Tor hidden service**
-- Your real IP is never exposed
+- Each user runs a **Tor hidden service** (via arti-client)
+- Your real IP is never exposed — all traffic routed through Tor
 - Peers connect via `.onion` addresses
 - Messages gossip through the network — no central relay
+- **Kademlia DHT** distributes and replicates content across nodes
+- Posts persist even when the author is offline
+- DMs are stored encrypted at the recipient's DHT key until retrieved
 - Nothing to take down, nothing to subpoena
 
 ### Communities
@@ -41,12 +44,28 @@ Every message is cryptographically signed — tampered messages are rejected by 
 
 ```bash
 # Clone and build
-git clone <repo-url>
-cd root-chat-software
+git clone https://github.com/elvisthebuilder/Y.git
+cd Y
 cargo build --release
 
-# Run
+# Run (bootstraps Tor automatically on first launch)
 cargo run
+```
+
+On first run, Y bootstraps the Tor client and creates your hidden service. This takes ~30 seconds the first time (downloading Tor consensus data), subsequent launches are faster.
+
+### Connecting to peers
+
+Share your `.onion` address (shown in your Profile tab) with someone. They connect with:
+
+```bash
+Y_PEER=your-address.onion:7331 cargo run
+```
+
+Or set a custom port:
+
+```bash
+Y_PORT=8080 cargo run
 ```
 
 ## Controls
@@ -63,9 +82,13 @@ cargo run
 | `.` | Nod at selected post (respect) |
 | `r` | Reply to selected post |
 | `s` | Bookmark / unbookmark post |
-| `Enter` | Open thread view |
+| `x` | Delete your post |
+| `g` | Go to post (from bookmarks) |
+| `Enter` | Expand/collapse replies |
+| `Shift+Enter` | New line while composing |
 | `/` | Search users |
 | `:` | Command mode |
+| `y` | Copy onion address (in Profile) |
 | `q` | Quit |
 
 ### Commands
@@ -95,23 +118,28 @@ Aliases are not globally unique — multiple users can share the same alias. The
 
 ```
 src/
-├── main.rs              — Entry point, TUI event loop
+├── main.rs              — Entry point, TUI event loop, network integration
 ├── crypto/
 │   ├── identity.rs      — Ed25519 keypair, address derivation, signing
+│   ├── alias.rs         — Alias generation and display handles
 │   └── encryption.rs    — X25519 Diffie-Hellman + ChaCha20Poly1305
 ├── protocol/
-│   ├── message.rs       — Message types, peer commands
-│   └── commands.rs      — Wire protocol envelope
+│   └── message.rs       — Message types, nods, replies
 ├── network/
-│   ├── tor.rs           — Tor hidden service management
-│   └── peer.rs          — Peer registry and discovery
+│   ├── tor.rs           — Tor hidden service (arti-client)
+│   ├── engine.rs        — Connection management, gossip, DM routing
+│   ├── codec.rs         — Length-prefixed framing over Tor streams
+│   ├── protocol.rs      — Wire message types (Hello, DHT, gossip)
+│   ├── dht.rs           — Kademlia DHT (routing table, storage, replication)
+│   ├── peer.rs          — Peer registry
+│   └── search.rs        — User search
 ├── storage/
-│   └── mod.rs           — sled embedded DB
+│   └── mod.rs           — sled embedded DB (identity, messages, bookmarks)
 ├── community/
 │   └── mod.rs           — Community membership and access control
 └── tui/
-    ├── app.rs           — App state, keybindings
-    └── ui.rs            — Terminal UI rendering
+    ├── app.rs           — App state, keybindings, threaded view
+    └── ui.rs            — Terminal UI rendering (tree lines, scrolling)
 ```
 
 ## Design Principles
@@ -124,11 +152,15 @@ src/
 
 ## Roadmap
 
-- [ ] Full Tor hidden service integration (via arti)
-- [ ] Gossip protocol for post propagation
-- [ ] Peer discovery via DHT
+- [x] Tor hidden service integration (arti-client)
+- [x] Gossip protocol for post propagation
+- [x] Kademlia DHT for distributed storage
+- [x] End-to-end encrypted DMs with store-and-forward
+- [x] Threaded replies with collapse/expand
+- [x] Alias system with disambiguation
 - [ ] Media attachments (encrypted)
 - [ ] Community invites and moderation tools
+- [ ] Bootstrap node list / peer discovery service
 - [ ] Mobile client
 - [ ] Onion-routed file sharing
 
