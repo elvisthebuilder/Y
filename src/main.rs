@@ -175,6 +175,10 @@ async fn main() -> Result<()> {
             }
         }
 
+        if let Some(text) = app.pending_copy.take() {
+            copy_to_clipboard(&text);
+        }
+
         if let Some(new_alias) = app.pending_alias_change.take() {
             let _ = storage.save_alias(&new_alias);
         }
@@ -232,4 +236,32 @@ async fn main() -> Result<()> {
 
     println!("root-chat terminated. Identity: {}", identity.address);
     Ok(())
+}
+
+fn copy_to_clipboard(text: &str) {
+    use std::process::{Command, Stdio};
+    use std::io::Write;
+
+    // Try xclip first, then xsel, then wl-copy (Wayland)
+    let commands = [
+        ("xclip", vec!["-selection", "clipboard"]),
+        ("xsel", vec!["--clipboard", "--input"]),
+        ("wl-copy", vec![]),
+    ];
+
+    for (cmd, args) in &commands {
+        if let Ok(mut child) = Command::new(cmd)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = child.wait();
+            return;
+        }
+    }
 }

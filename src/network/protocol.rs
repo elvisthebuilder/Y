@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use crate::protocol::message::Message;
+use super::dht::{DhtRequest, DhtResponse};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WireMessage {
@@ -21,6 +22,10 @@ pub enum WireMessage {
 
     // Nods propagation
     NodNotify { post_id: String, from: String },
+
+    // DHT operations
+    DhtRequest { request_id: u64, request: DhtRequest },
+    DhtResponse { request_id: u64, response: DhtResponse },
 
     // Keep-alive
     Ping(u64),

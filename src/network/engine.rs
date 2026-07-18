@@ -10,6 +10,7 @@ use tracing::{info, warn};
 use crate::crypto::identity::Identity;
 use crate::protocol::message::Message;
 use super::codec::FramedStream;
+use super::dht::{Dht, DhtNode, DhtValue, NodeId, StoredPost, StoredDm};
 use super::protocol::{WireMessage, HelloPayload, PeerAnnounce, EncryptedEnvelope};
 use super::tor::TorTransport;
 
@@ -33,6 +34,7 @@ pub struct NetworkEngine {
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     known_posts: Arc<RwLock<Vec<String>>>,
     tor: Arc<RwLock<Option<TorTransport>>>,
+    pub dht: Arc<Dht>,
 }
 
 struct PeerConnection {
@@ -49,6 +51,7 @@ impl NetworkEngine {
         data_dir: PathBuf,
         event_tx: mpsc::UnboundedSender<NetworkEvent>,
     ) -> Self {
+        let dht = Arc::new(Dht::new(&identity.address));
         Self {
             identity,
             alias,
@@ -58,6 +61,7 @@ impl NetworkEngine {
             event_tx,
             known_posts: Arc::new(RwLock::new(Vec::new())),
             tor: Arc::new(RwLock::new(None)),
+            dht,
         }
     }
 
@@ -77,8 +81,14 @@ impl NetworkEngine {
 
         info!("Network engine listening via Tor hidden service");
 
+        // On startup, check DHT for pending DMs addressed to us
+        let engine_dm = Arc::clone(&self);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            engine_dm.fetch_pending_dms().await;
+        });
+
         while let Some(stream) = incoming.recv().await {
-            info!("Incoming Tor connection");
             let engine = Arc::clone(&self);
             tokio::spawn(async move {
                 if let Err(e) = engine.handle_incoming(stream).await {
@@ -155,6 +165,14 @@ impl NetworkEngine {
         let count = peers.len();
         drop(peers);
 
+        // Add to DHT routing table
+        self.dht.add_node(DhtNode {
+            id: NodeId::from_address(&hello.address),
+            address: hello.address.clone(),
+            onion_addr: hello.listen_addr.clone(),
+            last_seen: Utc::now(),
+        }).await;
+
         let _ = self.event_tx.send(NetworkEvent::PeerConnected {
             address: hello.address.clone(),
             alias: hello.alias.clone(),
@@ -175,15 +193,22 @@ impl NetworkEngine {
                     let mut known = self.known_posts.write().await;
                     if !known.contains(&post.id) {
                         known.push(post.id.clone());
-                        let _ = self.event_tx.send(NetworkEvent::NewPost(post));
+                        let _ = self.event_tx.send(NetworkEvent::NewPost(post.clone()));
+
+                        // Store in DHT for persistence
+                        self.dht_store_post(&post).await;
                     }
                 }
-                WireMessage::RequestTimeline { .. } => {
-                    framed.send_json(&WireMessage::TimelineResponse(Vec::new())).await?;
+                WireMessage::RequestTimeline { since, limit } => {
+                    let timeline = self.dht_get_timeline(since, limit).await;
+                    framed.send_json(&WireMessage::TimelineResponse(timeline)).await?;
                 }
                 WireMessage::DirectMessage(envelope) => {
                     if envelope.recipient == self.identity.address {
                         let _ = self.event_tx.send(NetworkEvent::NewDirectMessage(envelope));
+                    } else {
+                        // Store in DHT for the recipient to retrieve later
+                        self.dht_store_dm(&envelope).await;
                     }
                 }
                 WireMessage::NodNotify { post_id, from } => {
@@ -205,6 +230,15 @@ impl NetworkEngine {
                         if !existing.contains_key(&peer.address) && peer.address != self.identity.address {
                             drop(existing);
                             info!("Discovered new peer: {} at {}", peer.alias, peer.listen_addr);
+
+                            // Add to DHT routing table even if we can't connect yet
+                            self.dht.add_node(DhtNode {
+                                id: NodeId::from_address(&peer.address),
+                                address: peer.address.clone(),
+                                onion_addr: peer.listen_addr.clone(),
+                                last_seen: Utc::now(),
+                            }).await;
+
                             let tor_lock = self.tor.read().await;
                             if let Some(tor) = tor_lock.as_ref() {
                                 if let Ok(stream) = tor.connect(&peer.listen_addr).await {
@@ -232,6 +266,13 @@ impl NetworkEngine {
                         }
                     }
                 }
+                WireMessage::DhtRequest { request_id, request } => {
+                    let response = self.dht.handle_request(request).await;
+                    framed.send_json(&WireMessage::DhtResponse { request_id, response }).await?;
+                }
+                WireMessage::DhtResponse { .. } => {
+                    // Responses are handled by the requester's task
+                }
                 WireMessage::Ping(nonce) => {
                     framed.send_json(&WireMessage::Pong(nonce)).await?;
                 }
@@ -243,11 +284,83 @@ impl NetworkEngine {
         Ok(())
     }
 
+    async fn dht_store_post(&self, post: &Message) {
+        let content = serde_json::to_vec(post).unwrap_or_default();
+        let signature = post.signature.clone();
+
+        let stored = StoredPost {
+            id: post.id.clone(),
+            author: post.author.clone(),
+            content,
+            signature,
+            timestamp: post.timestamp,
+            ttl: 86400 * 7, // 7 days
+        };
+
+        // Store at the post's key
+        let key = Dht::post_key(&post.id);
+        self.dht.store_value(&key, DhtValue::Post(stored.clone())).await;
+
+        // Also store in author's timeline key
+        let timeline_key = Dht::timeline_key(&post.author);
+        self.dht.store_value(&timeline_key, DhtValue::Post(stored)).await;
+    }
+
+    async fn dht_store_dm(&self, envelope: &EncryptedEnvelope) {
+        let mut hasher = sha2::Sha256::new();
+        use sha2::Digest;
+        hasher.update(envelope.recipient.as_bytes());
+        let result = hasher.finalize();
+        let mut recipient_hash = [0u8; 32];
+        recipient_hash.copy_from_slice(&result);
+
+        let stored = StoredDm {
+            recipient_hash,
+            sender: envelope.sender.clone(),
+            ephemeral_public: envelope.ephemeral_public,
+            nonce: envelope.nonce,
+            ciphertext: envelope.ciphertext.clone(),
+            timestamp: envelope.timestamp,
+            ttl: 86400 * 3, // 3 days
+        };
+
+        let key = Dht::dm_key(&envelope.recipient);
+        self.dht.store_value(&key, DhtValue::DirectMessage(stored)).await;
+    }
+
+    async fn dht_get_timeline(&self, _since: Option<chrono::DateTime<Utc>>, _limit: u32) -> Vec<Message> {
+        // Return posts stored in our local DHT node
+        // In a full implementation, this would do an iterative lookup
+        Vec::new()
+    }
+
+    async fn fetch_pending_dms(&self) {
+        let dms = self.dht.retrieve_dms(&self.identity.address).await;
+        for dm in dms {
+            if let DhtValue::DirectMessage(stored) = dm {
+                let envelope = EncryptedEnvelope {
+                    recipient: self.identity.address.clone(),
+                    sender: stored.sender,
+                    ephemeral_public: stored.ephemeral_public,
+                    nonce: stored.nonce,
+                    ciphertext: stored.ciphertext,
+                    timestamp: stored.timestamp,
+                };
+                let _ = self.event_tx.send(NetworkEvent::NewDirectMessage(envelope));
+            }
+        }
+        self.dht.clear_delivered_dms(&self.identity.address).await;
+    }
+
     pub async fn broadcast_post(&self, post: &Message) -> Result<()> {
         let mut known = self.known_posts.write().await;
         known.push(post.id.clone());
         drop(known);
 
+        // Store in DHT for persistence
+        self.dht_store_post(post).await;
+
+        // Also broadcast to directly connected peers for real-time delivery
         let msg = WireMessage::BroadcastPost(post.clone());
         let data = serde_json::to_vec(&msg)?;
 
@@ -261,16 +374,60 @@ impl NetworkEngine {
                 }
             }
         }
+
+        // Replicate to closest DHT nodes
+        let key = Dht::post_key(&post.id);
+        self.dht_replicate(&key, post).await;
+
         Ok(())
     }
 
+    async fn dht_replicate(&self, key: &NodeId, post: &Message) {
+        let closest = self.dht.find_closest(key).await;
+        let content = serde_json::to_vec(post).unwrap_or_default();
+        let signature = post.signature.clone();
+
+        let stored = StoredPost {
+            id: post.id.clone(),
+            author: post.author.clone(),
+            content,
+            signature,
+            timestamp: post.timestamp,
+            ttl: 86400 * 7,
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for node in closest {
+                if node.address == self.identity.address {
+                    continue;
+                }
+                if let Ok(stream) = tor.connect(&node.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let store_req = WireMessage::DhtRequest {
+                        request_id: rand::random(),
+                        request: super::dht::DhtRequest::Store {
+                            key: key.clone(),
+                            value: DhtValue::Post(stored.clone()),
+                        },
+                    };
+                    let _ = framed.send_json(&store_req).await;
+                }
+            }
+        }
+    }
+
     pub async fn send_dm(&self, envelope: EncryptedEnvelope) -> Result<()> {
+        // Store in DHT so recipient can retrieve even if offline
+        self.dht_store_dm(&envelope).await;
+
         let msg = WireMessage::DirectMessage(envelope.clone());
         let data = serde_json::to_vec(&msg)?;
 
         let peers = self.peers.read().await;
         let tor_lock = self.tor.read().await;
         if let Some(tor) = tor_lock.as_ref() {
+            // Try direct delivery first
             if let Some(peer) = peers.get(&envelope.recipient) {
                 if let Ok(stream) = tor.connect(&peer.onion_addr).await {
                     let mut framed = FramedStream::new(stream);
@@ -279,8 +436,14 @@ impl NetworkEngine {
                 }
             }
 
-            for peer in peers.values() {
-                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
+            // Replicate DM to DHT nodes closest to recipient's key
+            let key = Dht::dm_key(&envelope.recipient);
+            let closest = self.dht.find_closest(&key).await;
+            for node in closest {
+                if node.address == self.identity.address {
+                    continue;
+                }
+                if let Ok(stream) = tor.connect(&node.onion_addr).await {
                     let mut framed = FramedStream::new(stream);
                     let _ = framed.send(&data).await;
                 }
@@ -307,6 +470,21 @@ impl NetworkEngine {
             }
         }
         Ok(())
+    }
+
+    pub async fn fetch_user_timeline(&self, user_address: &str) -> Vec<Message> {
+        let key = Dht::timeline_key(user_address);
+        if let Some(values) = self.dht.get_value(&key).await {
+            values.into_iter().filter_map(|v| {
+                if let DhtValue::Post(stored) = v {
+                    serde_json::from_slice(&stored.content).ok()
+                } else {
+                    None
+                }
+            }).collect()
+        } else {
+            Vec::new()
+        }
     }
 
     pub async fn peer_count(&self) -> usize {

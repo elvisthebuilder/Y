@@ -56,6 +56,7 @@ pub struct App {
     pub pending_nod: Option<String>,
     pub pending_bookmark: Option<(String, bool)>,
     pub pending_save: bool,
+    pub pending_copy: Option<String>,
     pub pending_deletes: Vec<String>,
     pub confirm_delete: Option<String>,
     pub thread_replies: Vec<Message>,
@@ -88,6 +89,7 @@ impl App {
             pending_nod: None,
             pending_bookmark: None,
             pending_save: false,
+            pending_copy: None,
             pending_deletes: Vec::new(),
             confirm_delete: None,
             thread_replies: Vec::new(),
@@ -256,6 +258,14 @@ impl App {
                 'd' => { self.view = View::DirectMessages; self.scroll_offset = 0; }
                 'c' => { self.view = View::Communities; self.scroll_offset = 0; }
                 'p' => { self.view = View::Profile; self.scroll_offset = 0; }
+                'y' if self.view == View::Profile => {
+                    if let Some(ref addr) = self.onion_address {
+                        self.pending_copy = Some(addr.clone());
+                        self.status_message = "Onion address copied to clipboard".into();
+                    } else {
+                        self.status_message = "Onion address not ready yet".into();
+                    }
+                }
                 'b' => {
                     self.view = View::Bookmarks;
                     self.selected_post = 0;

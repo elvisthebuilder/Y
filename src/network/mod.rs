@@ -3,4 +3,5 @@ pub mod peer;
 pub mod search;
 pub mod codec;
 pub mod protocol;
+pub mod dht;
 pub mod engine;

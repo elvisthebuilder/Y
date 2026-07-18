@@ -43,14 +43,39 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         tab_span("Profile[p]", app.view == View::Profile),
     ];
 
+    let (status_icon, status_color) = if app.onion_address.is_some() {
+        ("● online", Color::Green)
+    } else {
+        ("○ connecting", Color::Yellow)
+    };
+
+    let status_text = format!("{} | {} peers ", status_icon, app.peer_count);
+
     let header = Paragraph::new(Line::from(tabs))
         .block(Block::default()
             .title(" Y ")
             .title_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
+            .title_bottom("")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(ACCENT)));
 
     frame.render_widget(header, area);
+
+    // Render status on the right side of the header
+    let status_width = status_text.len() as u16;
+    if area.width > status_width + 2 {
+        let status_area = Rect::new(
+            area.x + area.width - status_width - 2,
+            area.y + 1,
+            status_width,
+            1,
+        );
+        let status = Paragraph::new(Span::styled(
+            status_text,
+            Style::default().fg(status_color),
+        ));
+        frame.render_widget(status, status_area);
+    }
 }
 
 fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
@@ -274,6 +299,7 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
                 app.onion_address.as_deref().unwrap_or("bootstrapping..."),
                 Style::default().fg(ACCENT),
             ),
+            Span::styled("  [y]=copy", Style::default().fg(DIM)),
         ]),
         Line::from(vec![
             Span::styled("Peers:     ", Style::default().fg(DIM)),
@@ -364,11 +390,32 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
+    let display_msg = truncate_onion(&app.status_message);
     let status = Paragraph::new(Span::styled(
-        &app.status_message,
+        display_msg,
         Style::default().fg(DIM),
     ));
     frame.render_widget(status, area);
+}
+
+fn truncate_onion(msg: &str) -> String {
+    if let Some(pos) = msg.find(".onion") {
+        let before_onion = &msg[..pos];
+        // Find start of the onion address (after last space or colon)
+        let addr_start = before_onion.rfind(|c: char| c == ' ' || c == ':')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let onion_addr = &msg[addr_start..];
+        if onion_addr.len() > 20 {
+            let prefix = &msg[..addr_start];
+            let short = format!("{}...{}", &onion_addr[..8], &onion_addr[onion_addr.len()-12..]);
+            format!("{}{}", prefix, short)
+        } else {
+            msg.to_string()
+        }
+    } else {
+        msg.to_string()
+    }
 }
 
 fn draw_search(frame: &mut Frame, app: &App, area: Rect) {
