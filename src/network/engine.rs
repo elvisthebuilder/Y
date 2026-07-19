@@ -429,15 +429,28 @@ impl NetworkEngine {
 
         // Also broadcast to directly connected peers for real-time delivery
         let msg = WireMessage::BroadcastPost(post.clone());
-        let data = serde_json::to_vec(&msg)?;
 
         let peers = self.peers.read().await;
         let tor_lock = self.tor.read().await;
         if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             for peer in peers.values() {
                 if let Ok(stream) = tor.connect(&peer.onion_addr).await {
                     let mut framed = FramedStream::new(stream);
-                    let _ = framed.send(&data).await;
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
                 }
             }
         }
@@ -489,17 +502,31 @@ impl NetworkEngine {
         self.dht_store_dm(&envelope).await;
 
         let msg = WireMessage::DirectMessage(envelope.clone());
-        let data = serde_json::to_vec(&msg)?;
 
         let peers = self.peers.read().await;
         let tor_lock = self.tor.read().await;
         if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
             // Try direct delivery first
             if let Some(peer) = peers.get(&envelope.recipient) {
                 if let Ok(stream) = tor.connect(&peer.onion_addr).await {
                     let mut framed = FramedStream::new(stream);
-                    let _ = framed.send(&data).await;
-                    return Ok(());
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                        return Ok(());
+                    }
                 }
             }
 
@@ -512,7 +539,17 @@ impl NetworkEngine {
                 }
                 if let Ok(stream) = tor.connect(&node.onion_addr).await {
                     let mut framed = FramedStream::new(stream);
-                    let _ = framed.send(&data).await;
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
                 }
             }
         }
@@ -524,15 +561,28 @@ impl NetworkEngine {
             post_id: post_id.to_string(),
             from: self.identity.address.clone(),
         };
-        let data = serde_json::to_vec(&msg)?;
 
         let peers = self.peers.read().await;
         let tor_lock = self.tor.read().await;
         if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             for peer in peers.values() {
                 if let Ok(stream) = tor.connect(&peer.onion_addr).await {
                     let mut framed = FramedStream::new(stream);
-                    let _ = framed.send(&data).await;
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
                 }
             }
         }

@@ -75,6 +75,7 @@ pub struct App {
     pub conversations: HashMap<String, Vec<DmMessage>>,
     pub pending_dm: Option<(String, String)>,
     pub search_result_indices: Vec<usize>,
+    pub outbox: Vec<Message>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +127,7 @@ impl App {
             conversations: HashMap::new(),
             pending_dm: None,
             search_result_indices: Vec::new(),
+            outbox: Vec::new(),
         }
     }
 
@@ -306,6 +308,7 @@ impl App {
                 'd' => {
                     self.view = View::DirectMessages;
                     self.scroll_offset = 0;
+                    self.selected_list_item = 0;
                 }
                 'c' => {
                     self.view = View::Communities;
@@ -336,25 +339,25 @@ impl App {
                     self.clear_input();
                     self.search_results.clear();
                 }
-                'n' => {
+                'n' if matches!(self.view, View::Timeline | View::Compose) => {
                     self.view = View::Compose;
                     self.input_mode = InputMode::Editing;
                     self.clear_input();
                 }
-                'r' if self.selected_message_id().is_some() => {
+                'r' if matches!(self.view, View::Timeline | View::Bookmarks | View::Thread) && self.selected_message_id().is_some() => {
                     self.input_mode = InputMode::Replying;
                     self.clear_input();
                 }
-                '.' => {
+                '.' if matches!(self.view, View::Timeline | View::Bookmarks) => {
                     self.nod_selected();
                 }
-                's' => {
+                's' if matches!(self.view, View::Timeline | View::Bookmarks) => {
                     self.bookmark_selected();
                 }
-                'g' => {
+                'g' if self.view == View::Bookmarks => {
                     self.goto_post_in_timeline();
                 }
-                'x' if self.view != View::CommunityDetail => {
+                'x' if matches!(self.view, View::Timeline | View::Bookmarks) => {
                     self.prompt_delete();
                 }
                 '\n' => match self.view {
@@ -382,6 +385,10 @@ impl App {
                         self.open_thread();
                     }
                 },
+                'i' if self.view == View::DMConversation => {
+                    self.input_mode = InputMode::Editing;
+                    self.clear_input();
+                }
                 '\x1b' if self.view == View::DMConversation => {
                     self.view = View::DirectMessages;
                     self.dm_recipient = None;

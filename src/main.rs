@@ -338,17 +338,21 @@ async fn open() -> Result<()> {
         while let Ok(event) = event_rx.try_recv() {
             match event {
                 NetworkEvent::NewPost(msg) => {
-                    let _ = storage.save_message(&msg);
-                    app.timeline.insert(0, msg);
+                    if !app.timeline.iter().any(|m| m.id == msg.id) {
+                        let _ = storage.save_message(&msg);
+                        app.timeline.insert(0, msg);
+                    }
                 }
                 NetworkEvent::NodReceived { post_id, from } => {
                     if let Some(msg) = app.timeline.iter_mut().find(|m| m.id == post_id) {
-                        let nod = crate::protocol::message::Nod {
-                            from: from.clone(),
-                            timestamp: chrono::Utc::now(),
-                        };
-                        msg.nods.push(nod);
-                        let _ = storage.save_message(msg);
+                        if !msg.nods.iter().any(|n| n.from == from) {
+                            let nod = crate::protocol::message::Nod {
+                                from: from.clone(),
+                                timestamp: chrono::Utc::now(),
+                            };
+                            msg.nods.push(nod);
+                            let _ = storage.save_message(msg);
+                        }
                     }
                 }
                 NetworkEvent::PeerCountChanged(count) => {
@@ -395,11 +399,30 @@ async fn open() -> Result<()> {
                 }
                 NetworkEvent::ConnectivityChanged(online) => {
                     app.is_online = online;
-                    app.status_message = if online {
-                        "Back online — synced".to_string()
+                    if online {
+                        let mut to_broadcast: Vec<_> = app.outbox.drain(..).collect();
+                        // Also re-broadcast recent own posts that peers may have missed
+                        let own_posts: Vec<_> = app.timeline.iter()
+                            .filter(|m| m.author == app.handle)
+                            .take(20)
+                            .cloned()
+                            .collect();
+                        to_broadcast.extend(own_posts);
+                        if !to_broadcast.is_empty() {
+                            let count = to_broadcast.len();
+                            let engine_flush = Arc::clone(&engine);
+                            tokio::spawn(async move {
+                                for msg in to_broadcast {
+                                    let _ = engine_flush.broadcast_post(&msg).await;
+                                }
+                            });
+                            app.status_message = format!("Back online — syncing {} post(s)", count);
+                        } else {
+                            app.status_message = "Back online — synced".to_string();
+                        }
                     } else {
-                        "Offline — waiting for connection".to_string()
-                    };
+                        app.status_message = "Offline — waiting for connection".to_string();
+                    }
                 }
             }
         }
@@ -415,11 +438,16 @@ async fn open() -> Result<()> {
         if app.pending_post {
             if let Some(msg) = app.timeline.first() {
                 let _ = storage.save_message(msg);
-                let engine_bc = Arc::clone(&engine);
-                let msg_clone = msg.clone();
-                tokio::spawn(async move {
-                    let _ = engine_bc.broadcast_post(&msg_clone).await;
-                });
+                if app.is_online {
+                    let engine_bc = Arc::clone(&engine);
+                    let msg_clone = msg.clone();
+                    tokio::spawn(async move {
+                        let _ = engine_bc.broadcast_post(&msg_clone).await;
+                    });
+                } else {
+                    app.outbox.push(msg.clone());
+                    app.status_message = "Post saved — will broadcast when online.".into();
+                }
             }
             app.pending_post = false;
         }
