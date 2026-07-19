@@ -133,93 +133,117 @@ fn update() -> Result<()> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
 
-    let archive = match (os, arch) {
-        ("linux", "x86_64") => "y-linux-x86_64.tar.gz",
-        ("macos", "x86_64") => "y-macos-x86_64.tar.gz",
-        ("macos", "aarch64") => "y-macos-aarch64.tar.gz",
-        _ => {
-            println!(
-                "Unsupported platform ({} {}). Download manually from:",
-                os, arch
-            );
-            println!(
-                "  https://github.com/elvisthebuilder/Y/releases/tag/{}",
-                latest
-            );
-            return Ok(());
+    let has_dpkg = os == "linux"
+        && Cmd::new("dpkg")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+    let use_deb = has_dpkg && arch == "x86_64";
+
+    let asset = if use_deb {
+        format!("y_{}-1_amd64.deb", latest.trim_start_matches('v'))
+    } else {
+        match (os, arch) {
+            ("linux", "x86_64") => "y-linux-x86_64.tar.gz".to_string(),
+            ("macos", "x86_64") => "y-macos-x86_64.tar.gz".to_string(),
+            ("macos", "aarch64") => "y-macos-aarch64.tar.gz".to_string(),
+            _ => {
+                println!(
+                    "Unsupported platform ({} {}). Download manually from:",
+                    os, arch
+                );
+                println!(
+                    "  https://github.com/elvisthebuilder/Y/releases/tag/{}",
+                    latest
+                );
+                return Ok(());
+            }
         }
     };
 
     let url = format!(
         "https://github.com/elvisthebuilder/Y/releases/download/{}/{}",
-        latest, archive
+        latest, asset
     );
 
-    println!("Downloading {}...", archive);
+    println!("Downloading {}...", asset);
 
     let tmp_dir = std::env::temp_dir().join("y-update");
     let _ = std::fs::create_dir_all(&tmp_dir);
-    let archive_path = tmp_dir.join(archive);
+    let asset_path = tmp_dir.join(&asset);
 
     let dl = Cmd::new("curl")
         .args(["-sL", &url, "-o"])
-        .arg(&archive_path)
+        .arg(&asset_path)
         .status()?;
 
     if !dl.success() {
         println!("Download failed.");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
         return Ok(());
     }
 
-    println!("Extracting...");
-    let extract = Cmd::new("tar")
-        .args(["xzf"])
-        .arg(&archive_path)
-        .arg("-C")
-        .arg(&tmp_dir)
-        .status()?;
-
-    if !extract.success() {
-        println!("Extraction failed.");
-        return Ok(());
-    }
-
-    let new_binary = tmp_dir.join("y");
-    let current_exe = std::env::current_exe()?;
-
-    println!("Updating {}...", current_exe.display());
-
-    // Remove the old binary first — Linux won't let you overwrite a running executable
-    // ("Text file busy"), but unlinking it and placing a new file works fine.
-    let try_without_sudo = || -> bool {
-        let _ = std::fs::remove_file(&current_exe);
-        Cmd::new("cp")
-            .arg(&new_binary)
-            .arg(&current_exe)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    };
-
-    let try_with_sudo = || -> bool {
-        let _ = Cmd::new("sudo")
-            .args(["rm", "-f"])
-            .arg(&current_exe)
-            .status();
-        Cmd::new("sudo")
-            .args(["cp"])
-            .arg(&new_binary)
-            .arg(&current_exe)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    };
-
-    let success = if try_without_sudo() {
-        true
+    let success = if use_deb {
+        println!("Installing via dpkg...");
+        let status = Cmd::new("sudo")
+            .args(["dpkg", "-i"])
+            .arg(&asset_path)
+            .status()?;
+        status.success()
     } else {
-        println!("Retrying with sudo...");
-        try_with_sudo()
+        println!("Extracting...");
+        let extract = Cmd::new("tar")
+            .args(["xzf"])
+            .arg(&asset_path)
+            .arg("-C")
+            .arg(&tmp_dir)
+            .status()?;
+
+        if !extract.success() {
+            println!("Extraction failed.");
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Ok(());
+        }
+
+        let new_binary = tmp_dir.join("y");
+        let current_exe = std::env::current_exe()?;
+
+        println!("Updating {}...", current_exe.display());
+
+        let try_install = |use_sudo: bool| -> bool {
+            if use_sudo {
+                let _ = Cmd::new("sudo")
+                    .args(["rm", "-f"])
+                    .arg(&current_exe)
+                    .status();
+                Cmd::new("sudo")
+                    .args(["cp"])
+                    .arg(&new_binary)
+                    .arg(&current_exe)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            } else {
+                let _ = std::fs::remove_file(&current_exe);
+                Cmd::new("cp")
+                    .arg(&new_binary)
+                    .arg(&current_exe)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            }
+        };
+
+        if try_install(false) {
+            true
+        } else {
+            println!("Retrying with sudo...");
+            try_install(true)
+        }
     };
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
