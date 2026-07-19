@@ -221,6 +221,27 @@ impl DhtStorage {
             .collect()
     }
 
+    pub fn get_all_posts(&self, limit: usize) -> Vec<DhtValue> {
+        let mut posts: Vec<&DhtValue> = self
+            .data
+            .values()
+            .flatten()
+            .filter(|v| matches!(v, DhtValue::Post(_)))
+            .collect();
+        posts.sort_by(|a, b| {
+            let ts_a = match a {
+                DhtValue::Post(p) => p.timestamp,
+                _ => chrono::Utc::now(),
+            };
+            let ts_b = match b {
+                DhtValue::Post(p) => p.timestamp,
+                _ => chrono::Utc::now(),
+            };
+            ts_b.cmp(&ts_a)
+        });
+        posts.into_iter().take(limit).cloned().collect()
+    }
+
     pub fn remove_delivered_dms(&mut self, recipient_hash: &[u8; 32]) {
         for values in self.data.values_mut() {
             values.retain(|v| match v {
