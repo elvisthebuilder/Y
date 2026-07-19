@@ -43,11 +43,23 @@ Every message is cryptographically signed — tampered messages are rejected by 
 
 ## Install & Run
 
+### One-liner (Linux / macOS)
+
 ```bash
 curl -sL https://raw.githubusercontent.com/elvisthebuilder/Y/main/install.sh | sh
 ```
 
-That's it. Downloads the latest binary for your platform and installs it. Then:
+### Native installers
+
+Download from [Releases](https://github.com/elvisthebuilder/Y/releases):
+
+| Platform | Format | Install |
+|----------|--------|---------|
+| Linux | `.deb` | `sudo dpkg -i y_*.deb` |
+| macOS | `.dmg` | Open, drag to Applications |
+| Windows | `.msi` | Double-click to install |
+
+After install:
 
 ```bash
 y open
