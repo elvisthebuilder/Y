@@ -402,7 +402,9 @@ async fn open() -> Result<()> {
                     if online {
                         let mut to_broadcast: Vec<_> = app.outbox.drain(..).collect();
                         // Also re-broadcast recent own posts that peers may have missed
-                        let own_posts: Vec<_> = app.timeline.iter()
+                        let own_posts: Vec<_> = app
+                            .timeline
+                            .iter()
                             .filter(|m| m.author == app.handle)
                             .take(20)
                             .cloned()

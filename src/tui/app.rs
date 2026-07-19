@@ -344,7 +344,9 @@ impl App {
                     self.input_mode = InputMode::Editing;
                     self.clear_input();
                 }
-                'r' if matches!(self.view, View::Timeline | View::Bookmarks | View::Thread) && self.selected_message_id().is_some() => {
+                'r' if matches!(self.view, View::Timeline | View::Bookmarks | View::Thread)
+                    && self.selected_message_id().is_some() =>
+                {
                     self.input_mode = InputMode::Replying;
                     self.clear_input();
                 }
