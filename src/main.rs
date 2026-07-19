@@ -327,6 +327,8 @@ async fn open() -> Result<()> {
                         KeyCode::Right => app.move_cursor_right(),
                         KeyCode::Home => app.move_cursor_home(),
                         KeyCode::End => app.move_cursor_end(),
+                        KeyCode::Up => app.handle_arrow_up(),
+                        KeyCode::Down => app.handle_arrow_down(),
                         _ => {}
                     }
                 }
@@ -359,8 +361,16 @@ async fn open() -> Result<()> {
                 NetworkEvent::PeerDisconnected { address } => {
                     app.status_message = format!("Peer disconnected: {}", address);
                 }
-                NetworkEvent::NewDirectMessage(_envelope) => {
-                    app.status_message = "New encrypted DM received".to_string();
+                NetworkEvent::NewDirectMessage(envelope) => {
+                    let sender_alias = app
+                        .known_users
+                        .iter()
+                        .find(|(_, a)| *a == envelope.sender)
+                        .map(|(alias, _)| alias.clone())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let text = String::from_utf8_lossy(&envelope.ciphertext).to_string();
+                    app.receive_dm(envelope.sender.clone(), sender_alias.clone(), text);
+                    app.status_message = format!("New DM from {}", sender_alias);
                 }
                 NetworkEvent::OnionReady(addr) => {
                     app.status_message = format!("Tor hidden service ready: {}", addr);
@@ -405,6 +415,22 @@ async fn open() -> Result<()> {
             let nod_id = post_id.clone();
             tokio::spawn(async move {
                 let _ = engine_nod.broadcast_nod(&nod_id).await;
+            });
+        }
+
+        if let Some((recipient_address, text)) = app.pending_dm.take() {
+            let engine_dm = Arc::clone(&engine);
+            let sender = identity.address.clone();
+            tokio::spawn(async move {
+                let envelope = crate::network::protocol::EncryptedEnvelope {
+                    recipient: recipient_address,
+                    sender,
+                    ephemeral_public: [0u8; 32],
+                    nonce: [0u8; 12],
+                    ciphertext: text.into_bytes(),
+                    timestamp: chrono::Utc::now(),
+                };
+                let _ = engine_dm.send_dm(envelope).await;
             });
         }
 

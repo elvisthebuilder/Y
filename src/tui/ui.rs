@@ -87,7 +87,8 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
     match app.view {
         View::Timeline => draw_post_list(frame, app, &app.timeline, " Timeline ", area),
-        View::DirectMessages => draw_dms(frame, area),
+        View::DirectMessages => draw_dms(frame, app, area),
+        View::DMConversation => draw_dm_conversation(frame, app, area),
         View::Communities => draw_communities(frame, app, area),
         View::Profile => draw_profile(frame, app, area),
         View::Compose => draw_compose(frame, app, area),
@@ -355,40 +356,93 @@ fn draw_post_list(
     frame.render_widget(list, area);
 }
 
-fn draw_dms(frame: &mut Frame, area: Rect) {
-    let empty_height = area.height.saturating_sub(4) as usize;
-    let pad_top = empty_height / 2;
+fn draw_dms(frame: &mut Frame, app: &App, area: Rect) {
+    let convos = app.conversation_list();
+
+    if convos.is_empty() {
+        let empty_height = area.height.saturating_sub(4) as usize;
+        let pad_top = empty_height / 2;
+        let mut lines: Vec<Line> = Vec::new();
+        for _ in 0..pad_top.saturating_sub(2) {
+            lines.push(Line::from(""));
+        }
+        let w = area.width as usize - 2;
+        lines.push(Line::from(Span::styled(
+            format!("{:^w$}", "◇"),
+            Style::default().fg(BORDER_DIM),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("{:^w$}", "No conversations yet"),
+            Style::default().fg(DIM),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{:^w$}",
+                "End-to-end encrypted. No one else can read these."
+            ),
+            Style::default().fg(TIME_COLOR),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("{:^w$}", "Search for a user to start a DM  [/]"),
+            Style::default().fg(ACCENT),
+        )));
+
+        let block = Paragraph::new(lines).block(
+            Block::default()
+                .title(" Direct messages ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(BORDER_DIM)),
+        );
+        frame.render_widget(block, area);
+        return;
+    }
+
     let mut lines: Vec<Line> = Vec::new();
-    for _ in 0..pad_top.saturating_sub(2) {
+    for (i, (alias, _address, last_msg)) in convos.iter().enumerate() {
+        let is_selected = i == app.selected_list_item;
+        let prefix = if is_selected { "▸ " } else { "  " };
+        let preview = last_msg
+            .map(|m| {
+                let text = if m.text.len() > 40 {
+                    format!("{}...", &m.text[..40])
+                } else {
+                    m.text.clone()
+                };
+                if m.outgoing {
+                    format!("You: {}", text)
+                } else {
+                    text
+                }
+            })
+            .unwrap_or_default();
+        let time = last_msg
+            .map(|m| m.timestamp.format("%H:%M").to_string())
+            .unwrap_or_default();
+
+        let style = if is_selected {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(format!("{}{}", prefix, alias), style),
+            Span::styled(format!("  {}", time), Style::default().fg(TIME_COLOR)),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("    {}", preview),
+            Style::default().fg(DIM),
+        )));
         lines.push(Line::from(""));
     }
-    let w = area.width as usize - 2;
-    lines.push(Line::from(Span::styled(
-        format!("{:^w$}", "◇"),
-        Style::default().fg(BORDER_DIM),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("{:^w$}", "No conversations yet"),
-        Style::default().fg(DIM),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!(
-            "{:^w$}",
-            "End-to-end encrypted. No one else can read these."
-        ),
-        Style::default().fg(TIME_COLOR),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("{:^w$}", "Search for a user to start a DM  [/]"),
-        Style::default().fg(ACCENT),
-    )));
 
     let block = Paragraph::new(lines).block(
         Block::default()
-            .title(" Direct messages ")
+            .title(" Direct messages  [/] new  [Enter] open ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(BORDER_DIM)),
+            .border_style(Style::default().fg(ACCENT)),
     );
     frame.render_widget(block, area);
 }
@@ -820,12 +874,24 @@ fn draw_search(frame: &mut Frame, app: &App, area: Rect) {
         };
         lines.push(Line::from(Span::styled(hint, Style::default().fg(DIM))));
     } else {
-        for result in &app.search_results {
+        for (i, result) in app.search_results.iter().enumerate() {
+            let is_selected = i == app.selected_search_result;
+            let prefix = if is_selected { "▸ " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(ACCENT)
+            };
             lines.push(Line::from(Span::styled(
-                result,
-                Style::default().fg(ACCENT),
+                format!("{}{}", prefix, result),
+                style,
             )));
         }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ navigate  Enter: open DM",
+            Style::default().fg(DIM),
+        )));
     }
 
     let block = Paragraph::new(lines).block(
@@ -836,6 +902,79 @@ fn draw_search(frame: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(ACCENT)),
     );
     frame.render_widget(block, area);
+}
+
+fn draw_dm_conversation(frame: &mut Frame, app: &App, area: Rect) {
+    let (alias, address) = match &app.dm_recipient {
+        Some((a, addr)) => (a.as_str(), addr.as_str()),
+        None => return,
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(area);
+
+    let messages = app.conversations.get(address);
+    let mut lines: Vec<Line> = Vec::new();
+
+    if let Some(msgs) = messages {
+        if msgs.is_empty() {
+            let h = chunks[0].height.saturating_sub(4) as usize;
+            for _ in 0..h / 2 {
+                lines.push(Line::from(""));
+            }
+            let w = chunks[0].width as usize - 2;
+            lines.push(Line::from(Span::styled(
+                format!("{:^w$}", "Start of your conversation"),
+                Style::default().fg(DIM),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!("{:^w$}", "End-to-end encrypted"),
+                Style::default().fg(TIME_COLOR),
+            )));
+        } else {
+            for msg in msgs {
+                let time = msg.timestamp.format("%H:%M").to_string();
+                if msg.outgoing {
+                    let w = chunks[0].width as usize - 2;
+                    let text = format!("{} ◂ {}", time, msg.text);
+                    let pad = w.saturating_sub(text.len());
+                    lines.push(Line::from(Span::styled(
+                        format!("{:>pad$}{}", "", text),
+                        Style::default().fg(ACCENT),
+                    )));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("{} ▸ ", time), Style::default().fg(TIME_COLOR)),
+                        Span::styled(&msg.text, Style::default().fg(Color::White)),
+                    ]));
+                }
+            }
+        }
+    }
+
+    let msg_block = Paragraph::new(lines).block(
+        Block::default()
+            .title(format!(" {} ", alias))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(ACCENT)),
+    );
+    frame.render_widget(msg_block, chunks[0]);
+
+    let input = Paragraph::new(Line::from(vec![
+        Span::styled("▸ ", Style::default().fg(ACCENT)),
+        Span::styled(&app.input_buffer, Style::default().fg(Color::White)),
+        Span::styled("_", Style::default().fg(ACCENT)),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(BORDER_DIM)),
+    );
+    frame.render_widget(input, chunks[1]);
 }
 
 fn tab_span(label: &str, active: bool) -> Span<'_> {

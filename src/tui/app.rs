@@ -2,7 +2,7 @@ use crate::community::{Community, JoinResult};
 use crate::protocol::message::{Message, MessageContent, Nod, PostMessage, ReplyMessage};
 use chrono::Utc;
 use rand;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub struct DisplayEntry<'a> {
     pub message: &'a Message,
@@ -24,6 +24,7 @@ pub enum View {
     Bookmarks,
     Thread,
     CommunityDetail,
+    DMConversation,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +70,19 @@ pub struct App {
     pub selected_list_item: usize,
     pub known_users: Vec<(String, String)>,
     pub is_online: bool,
+    pub selected_search_result: usize,
+    pub dm_recipient: Option<(String, String)>,
+    pub conversations: HashMap<String, Vec<DmMessage>>,
+    pub pending_dm: Option<(String, String)>,
+    pub search_result_indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DmMessage {
+    pub from: String,
+    pub text: String,
+    pub timestamp: chrono::DateTime<Utc>,
+    pub outgoing: bool,
 }
 
 impl App {
@@ -107,6 +121,11 @@ impl App {
             selected_list_item: 0,
             known_users: Vec::new(),
             is_online: false,
+            selected_search_result: 0,
+            dm_recipient: None,
+            conversations: HashMap::new(),
+            pending_dm: None,
+            search_result_indices: Vec::new(),
         }
     }
 
@@ -346,10 +365,28 @@ impl App {
                             self.selected_list_item = 0;
                         }
                     }
+                    View::DirectMessages => {
+                        let convos = self.conversation_list();
+                        if let Some((_, address, _)) = convos.get(self.selected_list_item) {
+                            let address = address.to_string();
+                            let alias = self
+                                .known_users
+                                .iter()
+                                .find(|(_, a)| *a == address)
+                                .map(|(al, _)| al.clone())
+                                .unwrap_or_default();
+                            self.open_dm_conversation(alias, address);
+                        }
+                    }
                     _ => {
                         self.open_thread();
                     }
                 },
+                '\x1b' if self.view == View::DMConversation => {
+                    self.view = View::DirectMessages;
+                    self.dm_recipient = None;
+                    self.selected_list_item = 0;
+                }
                 '\x1b' if self.view == View::CommunityDetail => {
                     self.view = View::Communities;
                     self.selected_list_item = self.selected_community.unwrap_or(0);
@@ -383,6 +420,12 @@ impl App {
                             self.selected_list_item += 1;
                         }
                     }
+                    View::DirectMessages => {
+                        let max = self.conversations.len();
+                        if max > 0 && self.selected_list_item + 1 < max {
+                            self.selected_list_item += 1;
+                        }
+                    }
                     _ => {
                         self.scroll_offset = self.scroll_offset.saturating_add(1);
                     }
@@ -391,7 +434,7 @@ impl App {
                     View::Timeline | View::Bookmarks => {
                         self.selected_post = self.selected_post.saturating_sub(1);
                     }
-                    View::Communities | View::CommunityDetail => {
+                    View::Communities | View::CommunityDetail | View::DirectMessages => {
                         self.selected_list_item = self.selected_list_item.saturating_sub(1);
                     }
                     _ => {
@@ -403,30 +446,38 @@ impl App {
             InputMode::Editing => match key {
                 '\x1b' => {
                     self.input_mode = InputMode::Normal;
-                    self.view = View::Timeline;
+                    if self.view == View::DMConversation {
+                        self.view = View::DirectMessages;
+                    } else {
+                        self.view = View::Timeline;
+                    }
                 }
                 '\n' => {
-                    if !self.input_buffer.trim().is_empty() {
-                        let msg = Message {
-                            id: format!("{:x}", rand::random::<u64>()),
-                            author: self.handle.clone(),
-                            content: MessageContent::Post(PostMessage {
-                                text: self.input_buffer.clone(),
-                                media: None,
-                            }),
-                            timestamp: Utc::now(),
-                            signature: Vec::new(),
-                            reply_to: None,
-                            nods: Vec::new(),
-                            replies: Vec::new(),
-                        };
-                        self.timeline.insert(0, msg);
-                        self.pending_post = true;
-                        self.status_message = "Post published.".into();
+                    if self.view == View::DMConversation {
+                        self.send_dm_message();
+                    } else {
+                        if !self.input_buffer.trim().is_empty() {
+                            let msg = Message {
+                                id: format!("{:x}", rand::random::<u64>()),
+                                author: self.handle.clone(),
+                                content: MessageContent::Post(PostMessage {
+                                    text: self.input_buffer.clone(),
+                                    media: None,
+                                }),
+                                timestamp: Utc::now(),
+                                signature: Vec::new(),
+                                reply_to: None,
+                                nods: Vec::new(),
+                                replies: Vec::new(),
+                            };
+                            self.timeline.insert(0, msg);
+                            self.pending_post = true;
+                            self.status_message = "Post published.".into();
+                        }
+                        self.clear_input();
+                        self.input_mode = InputMode::Normal;
+                        self.view = View::Timeline;
                     }
-                    self.clear_input();
-                    self.input_mode = InputMode::Normal;
-                    self.view = View::Timeline;
                 }
                 _ => self.insert_char(key),
             },
@@ -448,13 +499,27 @@ impl App {
                     self.view = View::Timeline;
                     self.clear_input();
                     self.search_results.clear();
+                    self.selected_search_result = 0;
                 }
                 '\n' => {
-                    self.input_mode = InputMode::Normal;
+                    if !self.search_results.is_empty() {
+                        let sel = self
+                            .selected_search_result
+                            .min(self.search_results.len() - 1);
+                        if let Some(&user_idx) = self.search_result_indices.get(sel) {
+                            if let Some((alias, address)) = self.known_users.get(user_idx).cloned()
+                            {
+                                self.open_dm_conversation(alias, address);
+                            }
+                        }
+                    } else {
+                        self.input_mode = InputMode::Normal;
+                    }
                 }
                 _ => {
                     self.insert_char(key);
                     self.update_search_results();
+                    self.selected_search_result = 0;
                 }
             },
             InputMode::Command => match key {
@@ -843,13 +908,15 @@ impl App {
     fn update_search_results(&mut self) {
         let query = self.input_buffer.to_lowercase();
         self.search_results.clear();
+        self.search_result_indices.clear();
         if query.is_empty() {
             return;
         }
-        for (alias, address) in &self.known_users {
+        for (i, (alias, address)) in self.known_users.iter().enumerate() {
             if alias.to_lowercase().contains(&query) || address.to_lowercase().contains(&query) {
                 self.search_results
                     .push(format!("{}  {}", alias, truncate_address(address)));
+                self.search_result_indices.push(i);
             }
         }
     }
@@ -858,6 +925,94 @@ impl App {
         if !self.known_users.iter().any(|(_, a)| a == &address) {
             self.known_users.push((alias, address));
         }
+    }
+
+    pub fn handle_arrow_up(&mut self) {
+        if self.view == View::Search && self.input_mode == InputMode::SearchInput {
+            self.selected_search_result = self.selected_search_result.saturating_sub(1);
+        } else if self.view == View::DMConversation && self.input_mode == InputMode::Normal {
+            self.scroll_offset = self.scroll_offset.saturating_sub(1);
+        }
+    }
+
+    pub fn handle_arrow_down(&mut self) {
+        if self.view == View::Search
+            && self.input_mode == InputMode::SearchInput
+            && !self.search_results.is_empty()
+            && self.selected_search_result < self.search_results.len() - 1
+        {
+            self.selected_search_result += 1;
+        }
+    }
+
+    fn open_dm_conversation(&mut self, alias: String, address: String) {
+        self.dm_recipient = Some((alias.clone(), address.clone()));
+        self.view = View::DMConversation;
+        self.input_mode = InputMode::Editing;
+        self.clear_input();
+        self.search_results.clear();
+        self.search_result_indices.clear();
+        self.selected_search_result = 0;
+
+        self.conversations.entry(address).or_default();
+
+        self.status_message = format!("DM with {}", alias);
+    }
+
+    pub fn send_dm_message(&mut self) {
+        if self.input_buffer.trim().is_empty() {
+            return;
+        }
+        let text = self.input_buffer.clone();
+        if let Some((_, ref address)) = self.dm_recipient {
+            let address = address.clone();
+            let msg = DmMessage {
+                from: self.identity_address.clone(),
+                text: text.clone(),
+                timestamp: Utc::now(),
+                outgoing: true,
+            };
+            self.conversations
+                .entry(address.clone())
+                .or_default()
+                .push(msg);
+            self.pending_dm = Some((address, text));
+            self.clear_input();
+        }
+    }
+
+    pub fn receive_dm(&mut self, from_address: String, from_alias: String, text: String) {
+        let msg = DmMessage {
+            from: from_address.clone(),
+            text,
+            timestamp: Utc::now(),
+            outgoing: false,
+        };
+        self.conversations
+            .entry(from_address.clone())
+            .or_default()
+            .push(msg);
+
+        self.add_known_user(from_alias, from_address);
+    }
+
+    pub fn conversation_list(&self) -> Vec<(&str, &str, Option<&DmMessage>)> {
+        let mut convos: Vec<(&str, &str, Option<&DmMessage>)> = Vec::new();
+        for (address, messages) in &self.conversations {
+            let alias = self
+                .known_users
+                .iter()
+                .find(|(_, a)| a == address)
+                .map(|(alias, _)| alias.as_str())
+                .unwrap_or("unknown");
+            convos.push((alias, address.as_str(), messages.last()));
+        }
+        convos.sort_by(|a, b| {
+            let ts_a = a.2.map(|m| m.timestamp);
+            let ts_b = b.2.map(|m| m.timestamp);
+            ts_b.cmp(&ts_a)
+        });
+        convos
     }
 }
 
