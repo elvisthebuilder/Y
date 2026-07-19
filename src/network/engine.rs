@@ -14,6 +14,12 @@ use super::tor::TorTransport;
 use crate::crypto::identity::Identity;
 use crate::protocol::message::Message;
 
+// Seed nodes that new users connect to for initial peer discovery.
+// Add your always-online node's .onion address here (with port).
+const SEED_NODES: &[&str] = &[
+    // "your-seed-node.onion:7331",
+];
+
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {
     PeerConnected { address: String, alias: String },
@@ -689,6 +695,47 @@ impl NetworkEngine {
             self.announce_self().await;
             self.discover_peers().await;
             self.request_peer_lists().await;
+        }
+    }
+
+    pub async fn connect_to_seeds(&self) {
+        // Wait for Tor to be ready
+        loop {
+            {
+                let tor_lock = self.tor.read().await;
+                if tor_lock.as_ref().and_then(|t| t.onion_address()).is_some() {
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        let mut seeds: Vec<String> = SEED_NODES.iter().map(|s| s.to_string()).collect();
+
+        // Also load seeds from env var (comma-separated)
+        if let Ok(extra) = std::env::var("Y_SEEDS") {
+            for s in extra.split(',') {
+                let trimmed = s.trim().to_string();
+                if !trimmed.is_empty() && !seeds.contains(&trimmed) {
+                    seeds.push(trimmed);
+                }
+            }
+        }
+
+        if seeds.is_empty() {
+            info!("No seed nodes configured");
+            return;
+        }
+
+        // Stagger connections slightly to avoid overwhelming Tor
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+        for seed in &seeds {
+            info!("Connecting to seed node: {}", seed);
+            match self.connect_to(seed).await {
+                Ok(()) => info!("Connected to seed node: {}", seed),
+                Err(e) => warn!("Failed to connect to seed {}: {}", seed, e),
+            }
         }
     }
 
