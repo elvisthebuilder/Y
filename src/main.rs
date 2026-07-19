@@ -42,6 +42,9 @@ enum Command {
 }
 
 fn data_dir() -> PathBuf {
+    if let Ok(custom) = std::env::var("Y_DATA_DIR") {
+        return PathBuf::from(custom);
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".root-chat")
 }
