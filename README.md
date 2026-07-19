@@ -113,6 +113,14 @@ Y_PORT=8080 y serve
 
 Anyone can contribute seed nodes by running `y serve` and opening a PR. The more seeds, the less dependent the network is on any single one.
 
+### Update
+
+```bash
+y update
+```
+
+Checks GitHub for the latest release and replaces the current binary in-place. Falls back to `sudo` if needed.
+
 ### Uninstall
 
 ```bash
