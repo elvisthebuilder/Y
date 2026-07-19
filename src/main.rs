@@ -209,7 +209,8 @@ async fn open() -> Result<()> {
                 NetworkEvent::PeerCountChanged(count) => {
                     app.peer_count = count;
                 }
-                NetworkEvent::PeerConnected { alias, .. } => {
+                NetworkEvent::PeerConnected { alias, address } => {
+                    app.add_known_user(alias.clone(), address);
                     app.status_message = format!("Peer connected: {}", alias);
                 }
                 NetworkEvent::PeerDisconnected { address } => {

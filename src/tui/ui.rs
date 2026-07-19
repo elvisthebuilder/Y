@@ -817,10 +817,12 @@ fn draw_search(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     if app.search_results.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  Type an alias or address to find users. Enter to search.",
-            Style::default().fg(DIM),
-        )));
+        let hint = if app.input_buffer.is_empty() {
+            "  Start typing to find users by alias or address"
+        } else {
+            "  No users found"
+        };
+        lines.push(Line::from(Span::styled(hint, Style::default().fg(DIM))));
     } else {
         for result in &app.search_results {
             lines.push(Line::from(Span::styled(

@@ -67,6 +67,7 @@ pub struct App {
     pub communities: Vec<Community>,
     pub selected_community: Option<usize>,
     pub selected_list_item: usize,
+    pub known_users: Vec<(String, String)>,
 }
 
 impl App {
@@ -103,6 +104,7 @@ impl App {
             communities: Vec::new(),
             selected_community: None,
             selected_list_item: 0,
+            known_users: Vec::new(),
         }
     }
 
@@ -120,6 +122,9 @@ impl App {
                 .unwrap_or(0);
             self.input_buffer.remove(prev);
             self.cursor_pos = prev;
+            if self.input_mode == InputMode::SearchInput {
+                self.update_search_results();
+            }
         } else if matches!(
             self.input_mode,
             InputMode::Command | InputMode::SearchInput | InputMode::Replying
@@ -127,6 +132,7 @@ impl App {
             self.input_mode = InputMode::Normal;
             if matches!(self.view, View::Search) {
                 self.view = View::Timeline;
+                self.search_results.clear();
             }
         }
     }
@@ -439,12 +445,15 @@ impl App {
                     self.input_mode = InputMode::Normal;
                     self.view = View::Timeline;
                     self.clear_input();
+                    self.search_results.clear();
                 }
                 '\n' => {
-                    self.status_message = format!("Searching for '{}'...", self.input_buffer);
                     self.input_mode = InputMode::Normal;
                 }
-                _ => self.insert_char(key),
+                _ => {
+                    self.insert_char(key);
+                    self.update_search_results();
+                }
             },
             InputMode::Command => match key {
                 '\x1b' => {
@@ -826,6 +835,26 @@ impl App {
         let max = self.community_detail_item_count();
         if self.selected_list_item >= max && max > 0 {
             self.selected_list_item = max - 1;
+        }
+    }
+
+    fn update_search_results(&mut self) {
+        let query = self.input_buffer.to_lowercase();
+        self.search_results.clear();
+        if query.is_empty() {
+            return;
+        }
+        for (alias, address) in &self.known_users {
+            if alias.to_lowercase().contains(&query) || address.to_lowercase().contains(&query) {
+                self.search_results
+                    .push(format!("{}  {}", alias, truncate_address(address)));
+            }
+        }
+    }
+
+    pub fn add_known_user(&mut self, alias: String, address: String) {
+        if !self.known_users.iter().any(|(_, a)| a == &address) {
+            self.known_users.push((alias, address));
         }
     }
 }
