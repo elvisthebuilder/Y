@@ -68,6 +68,7 @@ pub struct App {
     pub selected_community: Option<usize>,
     pub selected_list_item: usize,
     pub known_users: Vec<(String, String)>,
+    pub is_online: bool,
 }
 
 impl App {
@@ -105,6 +106,7 @@ impl App {
             selected_community: None,
             selected_list_item: 0,
             known_users: Vec::new(),
+            is_online: false,
         }
     }
 

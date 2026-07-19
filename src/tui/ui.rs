@@ -48,16 +48,12 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         tab_span("p:Profile", app.view == View::Profile),
     ];
 
-    let (status_icon, status_color) = if app.onion_address.is_some() {
-        ("●", ACCENT)
+    let (status_icon, status_color, status_label) = if app.is_online {
+        ("●", ACCENT, "online")
+    } else if app.onion_address.is_some() {
+        ("○", COMMAND_COLOR, "offline")
     } else {
-        ("○", COMMAND_COLOR)
-    };
-
-    let status_label = if app.onion_address.is_some() {
-        "online"
-    } else {
-        "connecting"
+        ("○", COMMAND_COLOR, "connecting")
     };
     let status_text = format!(
         "{} {} | {} peers ",

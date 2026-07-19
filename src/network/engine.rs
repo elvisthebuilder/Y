@@ -27,6 +27,7 @@ pub enum NetworkEvent {
     NodReceived { post_id: String, from: String },
     PeerCountChanged(usize),
     OnionReady(String),
+    ConnectivityChanged(bool),
 }
 
 pub struct NetworkEngine {
@@ -735,6 +736,93 @@ impl NetworkEngine {
                 Err(e) => warn!("Failed to connect to seed {}: {}", seed, e),
             }
         }
+    }
+
+    pub async fn run_health_check_loop(self: Arc<Self>) {
+        // Wait for Tor to bootstrap first
+        loop {
+            {
+                let tor_lock = self.tor.read().await;
+                if tor_lock.as_ref().and_then(|t| t.onion_address()).is_some() {
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        let mut was_online = true;
+        let _ = self.event_tx.send(NetworkEvent::ConnectivityChanged(true));
+
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+
+            let is_online = self.check_connectivity().await;
+
+            if is_online != was_online {
+                let _ = self
+                    .event_tx
+                    .send(NetworkEvent::ConnectivityChanged(is_online));
+
+                if is_online {
+                    info!("Connectivity restored — syncing");
+                    self.announce_self().await;
+                    self.discover_peers().await;
+                    self.request_peer_lists().await;
+                    self.fetch_pending_dms().await;
+                } else {
+                    info!("Connectivity lost");
+                }
+
+                was_online = is_online;
+            }
+        }
+    }
+
+    async fn check_connectivity(&self) -> bool {
+        // Try pinging any connected peer first
+        let peer_addrs: Vec<String> = {
+            let peers = self.peers.read().await;
+            peers.values().map(|p| p.onion_addr.clone()).collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        let tor = match tor_lock.as_ref() {
+            Some(t) => t,
+            None => return false,
+        };
+
+        for addr in peer_addrs.iter().take(3) {
+            if let Ok(Ok(stream)) =
+                tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(addr)).await
+            {
+                let mut framed = FramedStream::new(stream);
+                let nonce: u64 = rand::random();
+                if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
+                    if let Ok(Ok(WireMessage::Pong(_))) = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        framed.recv_json::<WireMessage>(),
+                    )
+                    .await
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Fall back to trying seed nodes
+        for seed in SEED_NODES {
+            if let Ok(stream) =
+                tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(seed)).await
+            {
+                if stream.is_ok() {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     async fn request_peer_lists(&self) {

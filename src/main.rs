@@ -279,6 +279,11 @@ async fn open() -> Result<()> {
         engine_seed.connect_to_seeds().await;
     });
 
+    let engine_health = Arc::clone(&engine);
+    tokio::spawn(async move {
+        engine_health.run_health_check_loop().await;
+    });
+
     if let Ok(peer) = std::env::var("Y_PEER") {
         let engine_connect = Arc::clone(&engine);
         tokio::spawn(async move {
@@ -360,6 +365,14 @@ async fn open() -> Result<()> {
                 NetworkEvent::OnionReady(addr) => {
                     app.status_message = format!("Tor hidden service ready: {}", addr);
                     app.onion_address = Some(addr);
+                }
+                NetworkEvent::ConnectivityChanged(online) => {
+                    app.is_online = online;
+                    app.status_message = if online {
+                        "Back online — synced".to_string()
+                    } else {
+                        "Offline — waiting for connection".to_string()
+                    };
                 }
             }
         }
@@ -493,6 +506,11 @@ async fn serve() -> Result<()> {
         engine_seed.connect_to_seeds().await;
     });
 
+    let engine_health = Arc::clone(&engine);
+    tokio::spawn(async move {
+        engine_health.run_health_check_loop().await;
+    });
+
     println!("Waiting for Tor hidden service...");
 
     loop {
@@ -520,6 +538,13 @@ async fn serve() -> Result<()> {
                 }
                 NetworkEvent::NewPost(msg) => {
                     let _ = storage.save_message(&msg);
+                }
+                NetworkEvent::ConnectivityChanged(online) => {
+                    if online {
+                        println!("[*] Connectivity: ONLINE");
+                    } else {
+                        println!("[!] Connectivity: OFFLINE");
+                    }
                 }
                 _ => {}
             }
