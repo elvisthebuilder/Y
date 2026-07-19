@@ -44,16 +44,24 @@ Every message is cryptographically signed — tampered messages are rejected by 
 ## Install & Run
 
 ```bash
-# Clone and build
-git clone https://github.com/elvisthebuilder/Y.git
-cd Y
-cargo install --path .
+curl -sL https://raw.githubusercontent.com/elvisthebuilder/Y/main/install.sh | sh
+```
 
-# Open Y (bootstraps Tor automatically on first launch)
+That's it. Downloads the latest binary for your platform and installs it. Then:
+
+```bash
 y open
 ```
 
 Running `y` with no subcommand also opens the chat interface.
+
+### Build from source
+
+```bash
+git clone https://github.com/elvisthebuilder/Y.git
+cd Y
+cargo install --path .
+```
 
 On first run, Y bootstraps the Tor client and creates your hidden service. This takes ~30 seconds the first time (downloading Tor consensus data), subsequent launches are faster.
 
