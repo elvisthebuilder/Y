@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
 use super::codec::FramedStream;
-use super::dht::{Dht, DhtNode, DhtValue, NodeId, StoredDm, StoredPost};
+use super::dht::{Dht, DhtNode, DhtValue, NodeId, StoredDm, StoredPeerAnnounce, StoredPost};
 use super::protocol::{EncryptedEnvelope, HelloPayload, PeerAnnounce, WireMessage};
 use super::tor::TorTransport;
 use crate::crypto::identity::Identity;
@@ -537,5 +537,191 @@ impl NetworkEngine {
 
     pub async fn peer_count(&self) -> usize {
         self.peers.read().await.len()
+    }
+
+    pub async fn announce_self(&self) {
+        let onion = {
+            let tor_lock = self.tor.read().await;
+            tor_lock
+                .as_ref()
+                .and_then(|t| t.onion_address().map(|s| s.to_string()))
+                .unwrap_or_default()
+        };
+        if onion.is_empty() {
+            return;
+        }
+
+        let announce = StoredPeerAnnounce {
+            address: self.identity.address.clone(),
+            alias: self.alias.clone(),
+            onion_addr: onion,
+            timestamp: Utc::now(),
+        };
+
+        let key = Dht::peer_registry_key();
+        self.dht
+            .store_value(&key, DhtValue::PeerAnnounce(announce.clone()))
+            .await;
+
+        // Replicate announcement to closest DHT nodes
+        let closest = self.dht.find_closest(&key).await;
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for node in closest {
+                if node.address == self.identity.address {
+                    continue;
+                }
+                if let Ok(stream) = tor.connect(&node.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let store_req = WireMessage::DhtRequest {
+                        request_id: rand::random(),
+                        request: super::dht::DhtRequest::Store {
+                            key: key.clone(),
+                            value: DhtValue::PeerAnnounce(announce.clone()),
+                        },
+                    };
+                    let _ = framed.send_json(&store_req).await;
+                }
+            }
+        }
+
+        info!("Announced self to DHT peer registry");
+    }
+
+    pub async fn discover_peers(&self) {
+        let key = Dht::peer_registry_key();
+
+        // Check local DHT storage first
+        let mut discovered: Vec<StoredPeerAnnounce> = Vec::new();
+        if let Some(values) = self.dht.get_value(&key).await {
+            for v in values {
+                if let DhtValue::PeerAnnounce(pa) = v {
+                    if pa.address != self.identity.address {
+                        discovered.push(pa);
+                    }
+                }
+            }
+        }
+
+        // Also query closest DHT nodes for their peer registries
+        let closest = self.dht.find_closest(&key).await;
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for node in &closest {
+                if node.address == self.identity.address {
+                    continue;
+                }
+                if let Ok(stream) = tor.connect(&node.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let find_req = WireMessage::DhtRequest {
+                        request_id: rand::random(),
+                        request: super::dht::DhtRequest::FindValue { key: key.clone() },
+                    };
+                    if framed.send_json(&find_req).await.is_ok() {
+                        if let Ok(WireMessage::DhtResponse {
+                            response: super::dht::DhtResponse::ValueFound(values),
+                            ..
+                        }) = framed.recv_json::<WireMessage>().await
+                        {
+                            for v in values {
+                                if let DhtValue::PeerAnnounce(pa) = v {
+                                    if pa.address != self.identity.address {
+                                        discovered.push(pa);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        drop(tor_lock);
+
+        // Connect to newly discovered peers
+        for peer in discovered {
+            let existing = self.peers.read().await;
+            if existing.contains_key(&peer.address) {
+                continue;
+            }
+            drop(existing);
+
+            // Add to routing table
+            self.dht
+                .add_node(DhtNode {
+                    id: NodeId::from_address(&peer.address),
+                    address: peer.address.clone(),
+                    onion_addr: peer.onion_addr.clone(),
+                    last_seen: Utc::now(),
+                })
+                .await;
+
+            info!("Discovered peer via DHT: {} ({})", peer.alias, peer.address);
+            if let Err(e) = self.connect_to(&peer.onion_addr).await {
+                warn!("Failed to connect to discovered peer {}: {}", peer.alias, e);
+            }
+        }
+    }
+
+    pub async fn run_discovery_loop(self: Arc<Self>) {
+        // Wait for Tor to be ready
+        loop {
+            {
+                let tor_lock = self.tor.read().await;
+                if tor_lock.as_ref().and_then(|t| t.onion_address()).is_some() {
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        // Initial announce + discovery after a short delay
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        self.announce_self().await;
+        self.discover_peers().await;
+
+        // Also request peer lists from connected peers
+        self.request_peer_lists().await;
+
+        // Re-announce and discover periodically
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
+        loop {
+            interval.tick().await;
+            self.announce_self().await;
+            self.discover_peers().await;
+            self.request_peer_lists().await;
+        }
+    }
+
+    async fn request_peer_lists(&self) {
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values().map(|pc| pc.onion_addr.clone()).collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for onion in peers {
+                if let Ok(stream) = tor.connect(&onion).await {
+                    let mut framed = FramedStream::new(stream);
+
+                    // Send a hello first
+                    let my_onion = tor
+                        .onion_address()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion,
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&WireMessage::RequestPeers).await;
+                    }
+                }
+            }
+        }
     }
 }

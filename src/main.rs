@@ -136,6 +136,11 @@ async fn open() -> Result<()> {
         }
     });
 
+    let engine_discovery = Arc::clone(&engine);
+    tokio::spawn(async move {
+        engine_discovery.run_discovery_loop().await;
+    });
+
     if let Ok(peer) = std::env::var("Y_PEER") {
         let engine_connect = Arc::clone(&engine);
         tokio::spawn(async move {

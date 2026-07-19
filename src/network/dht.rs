@@ -328,6 +328,10 @@ impl Dht {
         NodeId(id)
     }
 
+    pub fn peer_registry_key() -> NodeId {
+        NodeId::from_key(b"y:peer-registry:global")
+    }
+
     pub fn community_key(community_id: &str) -> NodeId {
         let mut hasher = Sha256::new();
         hasher.update(b"community:");
