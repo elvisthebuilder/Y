@@ -46,6 +46,7 @@ struct PeerConnection {
     address: String,
     alias: String,
     onion_addr: String,
+    verifying_key: [u8; 32],
 }
 
 impl NetworkEngine {
@@ -172,6 +173,7 @@ impl NetworkEngine {
                 address: hello.address.clone(),
                 alias: hello.alias.clone(),
                 onion_addr: hello.listen_addr.clone(),
+                verifying_key: hello.verifying_key,
             },
         );
         let count = peers.len();
@@ -542,6 +544,11 @@ impl NetworkEngine {
 
     pub async fn peer_count(&self) -> usize {
         self.peers.read().await.len()
+    }
+
+    pub async fn peer_verifying_key(&self, address: &str) -> Option<[u8; 32]> {
+        let peers = self.peers.read().await;
+        peers.get(address).map(|p| p.verifying_key)
     }
 
     pub async fn announce_self(&self) {

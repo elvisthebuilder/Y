@@ -1,9 +1,11 @@
 use anyhow::Result;
 use base64::Engine;
+use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
 #[derive(Clone)]
 pub struct Identity {
@@ -106,4 +108,28 @@ impl Identity {
             alias,
         }
     }
+
+    pub fn x25519_secret(&self) -> X25519StaticSecret {
+        let mut hasher = Sha512::new();
+        hasher.update(self.signing_key.as_bytes());
+        let hash = hasher.finalize();
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(&hash[..32]);
+        // Clamp per RFC 7748
+        key_bytes[0] &= 248;
+        key_bytes[31] &= 127;
+        key_bytes[31] |= 64;
+        X25519StaticSecret::from(key_bytes)
+    }
+
+    pub fn x25519_public(&self) -> X25519PublicKey {
+        X25519PublicKey::from(&self.x25519_secret())
+    }
+}
+
+pub fn verifying_key_to_x25519(vk: &VerifyingKey) -> Option<X25519PublicKey> {
+    let compressed = CompressedEdwardsY(vk.to_bytes());
+    let edwards = compressed.decompress()?;
+    let montgomery = edwards.to_montgomery();
+    Some(X25519PublicKey::from(montgomery.to_bytes()))
 }

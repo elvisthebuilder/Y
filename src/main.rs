@@ -368,7 +368,23 @@ async fn open() -> Result<()> {
                         .find(|(_, a)| *a == envelope.sender)
                         .map(|(alias, _)| alias.clone())
                         .unwrap_or_else(|| "unknown".to_string());
-                    let text = String::from_utf8_lossy(&envelope.ciphertext).to_string();
+                    let payload = crate::crypto::encryption::EncryptedPayload {
+                        ephemeral_public: envelope.ephemeral_public,
+                        nonce: envelope.nonce,
+                        ciphertext: envelope.ciphertext,
+                    };
+                    let x25519_secret = identity.x25519_secret();
+                    let text = match crate::crypto::encryption::decrypt_payload(
+                        &payload,
+                        &x25519_secret,
+                    ) {
+                        Ok(plaintext) => String::from_utf8_lossy(&plaintext).to_string(),
+                        Err(_) => {
+                            app.status_message =
+                                format!("Failed to decrypt DM from {}", sender_alias);
+                            continue;
+                        }
+                    };
                     app.receive_dm(envelope.sender.clone(), sender_alias.clone(), text);
                     app.status_message = format!("New DM from {}", sender_alias);
                 }
@@ -422,13 +438,31 @@ async fn open() -> Result<()> {
             let engine_dm = Arc::clone(&engine);
             let sender = identity.address.clone();
             tokio::spawn(async move {
-                let envelope = crate::network::protocol::EncryptedEnvelope {
-                    recipient: recipient_address,
-                    sender,
-                    ephemeral_public: [0u8; 32],
-                    nonce: [0u8; 12],
-                    ciphertext: text.into_bytes(),
-                    timestamp: chrono::Utc::now(),
+                let vk_bytes = engine_dm.peer_verifying_key(&recipient_address).await;
+                let envelope = if let Some(vk_bytes) = vk_bytes {
+                    let vk = ed25519_dalek::VerifyingKey::from_bytes(&vk_bytes).ok();
+                    let x25519_pub =
+                        vk.and_then(|k| crate::crypto::identity::verifying_key_to_x25519(&k));
+                    if let Some(pub_key) = x25519_pub {
+                        match crate::crypto::encryption::encrypt_for_recipient(
+                            text.as_bytes(),
+                            &pub_key,
+                        ) {
+                            Ok(payload) => crate::network::protocol::EncryptedEnvelope {
+                                recipient: recipient_address,
+                                sender,
+                                ephemeral_public: payload.ephemeral_public,
+                                nonce: payload.nonce,
+                                ciphertext: payload.ciphertext,
+                                timestamp: chrono::Utc::now(),
+                            },
+                            Err(_) => return,
+                        }
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
                 };
                 let _ = engine_dm.send_dm(envelope).await;
             });
