@@ -77,27 +77,39 @@ cargo install --path .
 
 On first run, Y bootstraps the Tor client and creates your hidden service. This takes ~30 seconds the first time (downloading Tor consensus data), subsequent launches are faster.
 
-### Connecting to peers
+### The Mediator (peer discovery)
 
-Share your `.onion` address (shown in your Profile tab) with someone. They connect with:
+Y ships with a default seed node called **the mediator**. On startup, your client connects to it automatically and discovers other peers through the DHT. No manual peer configuration needed.
+
+The mediator has no special privileges — it can't read your DMs, censor posts, or control the network. It's just a peer that's always online so new users can find everyone else. If it goes down, existing peers continue talking to each other.
+
+You can override or add additional seed nodes:
 
 ```bash
-Y_PEER=your-address.onion:7331 y open
+Y_SEEDS=your-seed.onion:7331,another-seed.onion:7331 y open
 ```
 
-Or set a custom port:
+Or connect to a specific peer directly:
 
 ```bash
-Y_PORT=8080 y open
+Y_PEER=someone.onion:7331 y open
 ```
 
-### Run as mediator (headless seed node)
+### Run your own seed node
+
+Anyone can run a seed node. The more seeds, the more resilient the network.
 
 ```bash
+# On any always-on server (EC2, VPS, Raspberry Pi, etc.)
 y serve
 ```
 
-Runs the network engine without the TUI — prints the `.onion` address and handles peer connections. Designed for always-on servers that bootstrap the network.
+This runs the network engine headless — no TUI, just peer connections. It prints the `.onion` address on startup. Submit it as a PR to `SEED_NODES` in `src/network/engine.rs` to help bootstrap the network for everyone.
+
+```bash
+# Custom port
+Y_PORT=8080 y serve
+```
 
 ### Uninstall
 
@@ -204,7 +216,7 @@ src/
 - [x] Alias system with disambiguation
 - [ ] Media attachments (encrypted)
 - [x] Community creation, join requests, and owner approval flow
-- [ ] Bootstrap node list / peer discovery service
+- [x] The mediator — seed node for automatic peer discovery
 - [ ] Mobile client
 - [ ] Onion-routed file sharing
 
