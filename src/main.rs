@@ -189,22 +189,42 @@ fn update() -> Result<()> {
 
     println!("Updating {}...", current_exe.display());
 
-    let status = Cmd::new("cp").arg(&new_binary).arg(&current_exe).status()?;
+    // Remove the old binary first — Linux won't let you overwrite a running executable
+    // ("Text file busy"), but unlinking it and placing a new file works fine.
+    let try_without_sudo = || -> bool {
+        let _ = std::fs::remove_file(&current_exe);
+        Cmd::new("cp")
+            .arg(&new_binary)
+            .arg(&current_exe)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
 
-    let status = if !status.success() {
-        println!("Retrying with sudo...");
+    let try_with_sudo = || -> bool {
+        let _ = Cmd::new("sudo")
+            .args(["rm", "-f"])
+            .arg(&current_exe)
+            .status();
         Cmd::new("sudo")
             .args(["cp"])
             .arg(&new_binary)
             .arg(&current_exe)
-            .status()?
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+
+    let success = if try_without_sudo() {
+        true
     } else {
-        status
+        println!("Retrying with sudo...");
+        try_with_sudo()
     };
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
-    if status.success() {
+    if success {
         println!("Updated to {}.", latest);
     } else {
         println!("Update failed. Try running with sudo: sudo y update");
