@@ -616,7 +616,16 @@ impl App {
             None => return,
         };
         if let Some(msg) = self.timeline.iter_mut().find(|m| m.id == id) {
-            if !msg.has_nodded(&handle) {
+            if msg.has_nodded(&handle) {
+                msg.nods.retain(|n| n.from != handle);
+                let count = msg.nod_count();
+                self.pending_save = true;
+                self.status_message = if count > 0 {
+                    format!("Unnodded. ({} nods)", count)
+                } else {
+                    "Unnodded.".into()
+                };
+            } else {
                 msg.nods.push(Nod {
                     from: handle,
                     timestamp: Utc::now(),
@@ -625,8 +634,6 @@ impl App {
                 self.pending_nod = Some(id);
                 self.pending_save = true;
                 self.status_message = format!("Nodded. ({} nods)", count);
-            } else {
-                self.status_message = "Already nodded.".into();
             }
         }
     }
