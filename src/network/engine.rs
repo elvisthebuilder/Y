@@ -14,11 +14,9 @@ use super::tor::TorTransport;
 use crate::crypto::identity::Identity;
 use crate::protocol::message::Message;
 
-// Seed nodes that new users connect to for initial peer discovery.
-// Add your always-online node's .onion address here (with port).
-const SEED_NODES: &[&str] = &[
-    // "your-seed-node.onion:7331",
-];
+// The Mediator — seed node for initial peer discovery.
+const SEED_NODES: &[&str] =
+    &["kfpa2iyzmurhkpaqn4kf2ez5ztojplhbq5z2jzfv3jdzhuspqx4fliad.onion:7331"];
 
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {

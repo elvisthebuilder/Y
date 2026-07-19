@@ -61,7 +61,11 @@ impl TorTransport {
 
         let onion_addr = service
             .onion_name()
-            .map(|hsid| format!("{}.onion:{}", hsid, port))
+            .map(|hsid| {
+                let name = hsid.to_string();
+                let base = name.strip_suffix(".onion").unwrap_or(&name);
+                format!("{}.onion:{}", base, port)
+            })
             .unwrap_or_else(|| "pending.onion".to_string());
 
         info!("Hidden service running at: {}", onion_addr);

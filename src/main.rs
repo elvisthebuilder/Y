@@ -371,14 +371,12 @@ async fn serve() -> Result<()> {
                 NetworkEvent::OnionReady(addr) => {
                     println!();
                     println!("========================================");
-                    println!("  MEDIATOR ONLINE");
-                    println!("  Onion: {}", addr);
-                    println!("  Port:  {}", listen_port);
-                    println!("  Peer:  {}:{}", addr, listen_port);
+                    println!("  THE MEDIATOR — ONLINE");
+                    println!("  Address: {}", addr);
                     println!("========================================");
                     println!();
                     println!("Add this to SEED_NODES or use:");
-                    println!("  Y_SEEDS={}:{} y open", addr, listen_port);
+                    println!("  Y_SEEDS={} y open", addr);
                     println!();
                 }
                 NetworkEvent::PeerConnected { alias, address } => {
