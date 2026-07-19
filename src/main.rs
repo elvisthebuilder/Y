@@ -391,6 +391,7 @@ async fn open() -> Result<()> {
                 NetworkEvent::OnionReady(addr) => {
                     app.status_message = format!("Tor hidden service ready: {}", addr);
                     app.onion_address = Some(addr);
+                    app.is_online = true;
                 }
                 NetworkEvent::ConnectivityChanged(online) => {
                     app.is_online = online;

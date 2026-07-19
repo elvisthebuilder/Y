@@ -758,30 +758,34 @@ impl NetworkEngine {
         }
 
         let mut was_online = true;
+        let mut fail_count: u32 = 0;
         let _ = self.event_tx.send(NetworkEvent::ConnectivityChanged(true));
 
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             interval.tick().await;
 
-            let is_online = self.check_connectivity().await;
+            let check_passed = self.check_connectivity().await;
 
-            if is_online != was_online {
-                let _ = self
-                    .event_tx
-                    .send(NetworkEvent::ConnectivityChanged(is_online));
-
-                if is_online {
+            if check_passed {
+                fail_count = 0;
+                if !was_online {
+                    was_online = true;
+                    let _ = self.event_tx.send(NetworkEvent::ConnectivityChanged(true));
                     info!("Connectivity restored — syncing");
                     self.announce_self().await;
                     self.discover_peers().await;
                     self.request_peer_lists().await;
                     self.fetch_pending_dms().await;
-                } else {
+                }
+            } else {
+                fail_count += 1;
+                // Only mark offline after 3 consecutive failures (~90s)
+                if was_online && fail_count >= 3 {
+                    was_online = false;
+                    let _ = self.event_tx.send(NetworkEvent::ConnectivityChanged(false));
                     info!("Connectivity lost");
                 }
-
-                was_online = is_online;
             }
         }
     }
