@@ -27,7 +27,7 @@ use crate::storage::Storage;
 use crate::tui::app::App;
 
 #[derive(Parser)]
-#[command(name = "y", about = "Decentralized, anonymous chat over Tor")]
+#[command(name = "y", about = "Decentralized, anonymous chat over Tor", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -39,6 +39,8 @@ enum Command {
     Open,
     /// Run Y as a headless mediator node (no TUI)
     Serve,
+    /// Update Y to the latest release
+    Update,
     /// Uninstall Y — remove binary and data
     Uninstall,
 }
@@ -58,6 +60,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Command::Uninstall) => uninstall(),
         Some(Command::Serve) => serve().await,
+        Some(Command::Update) => update(),
         Some(Command::Open) | None => open().await,
     }
 }
@@ -80,6 +83,133 @@ fn uninstall() -> Result<()> {
     }
 
     println!("Y has been uninstalled.");
+    Ok(())
+}
+
+fn update() -> Result<()> {
+    use std::process::Command as Cmd;
+
+    let current_version = env!("CARGO_PKG_VERSION");
+    println!("Current version: v{}", current_version);
+    println!("Checking for updates...");
+
+    let output = Cmd::new("curl")
+        .args([
+            "-sL",
+            "https://api.github.com/repos/elvisthebuilder/Y/releases/latest",
+        ])
+        .output()?;
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let latest_tag = body
+        .lines()
+        .find(|l| l.contains("\"tag_name\""))
+        .and_then(|l| {
+            let after_key = &l[l.find("tag_name")? + 10..];
+            let start = after_key.find('"')? + 1;
+            let end = start + after_key[start..].find('"')?;
+            Some(after_key[start..end].to_string())
+        });
+
+    let latest = match latest_tag {
+        Some(t) => t,
+        None => {
+            println!("Could not fetch latest release.");
+            return Ok(());
+        }
+    };
+
+    let latest_version = latest.trim_start_matches('v');
+    if latest_version == current_version {
+        println!("Already up to date (v{}).", current_version);
+        return Ok(());
+    }
+
+    println!(
+        "New version available: {} (current: v{})",
+        latest, current_version
+    );
+
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+
+    let archive = match (os, arch) {
+        ("linux", "x86_64") => "y-linux-x86_64.tar.gz",
+        ("macos", "x86_64") => "y-macos-x86_64.tar.gz",
+        ("macos", "aarch64") => "y-macos-aarch64.tar.gz",
+        _ => {
+            println!(
+                "Unsupported platform ({} {}). Download manually from:",
+                os, arch
+            );
+            println!(
+                "  https://github.com/elvisthebuilder/Y/releases/tag/{}",
+                latest
+            );
+            return Ok(());
+        }
+    };
+
+    let url = format!(
+        "https://github.com/elvisthebuilder/Y/releases/download/{}/{}",
+        latest, archive
+    );
+
+    println!("Downloading {}...", archive);
+
+    let tmp_dir = std::env::temp_dir().join("y-update");
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let archive_path = tmp_dir.join(archive);
+
+    let dl = Cmd::new("curl")
+        .args(["-sL", &url, "-o"])
+        .arg(&archive_path)
+        .status()?;
+
+    if !dl.success() {
+        println!("Download failed.");
+        return Ok(());
+    }
+
+    println!("Extracting...");
+    let extract = Cmd::new("tar")
+        .args(["xzf"])
+        .arg(&archive_path)
+        .arg("-C")
+        .arg(&tmp_dir)
+        .status()?;
+
+    if !extract.success() {
+        println!("Extraction failed.");
+        return Ok(());
+    }
+
+    let new_binary = tmp_dir.join("y");
+    let current_exe = std::env::current_exe()?;
+
+    println!("Updating {}...", current_exe.display());
+
+    let status = Cmd::new("cp").arg(&new_binary).arg(&current_exe).status()?;
+
+    let status = if !status.success() {
+        println!("Retrying with sudo...");
+        Cmd::new("sudo")
+            .args(["cp"])
+            .arg(&new_binary)
+            .arg(&current_exe)
+            .status()?
+    } else {
+        status
+    };
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    if status.success() {
+        println!("Updated to {}.", latest);
+    } else {
+        println!("Update failed. Try running with sudo: sudo y update");
+    }
+
     Ok(())
 }
 
