@@ -37,6 +37,8 @@ struct Cli {
 enum Command {
     /// Open Y — launch the chat interface
     Open,
+    /// Run Y as a headless mediator node (no TUI)
+    Serve,
     /// Uninstall Y — remove binary and data
     Uninstall,
 }
@@ -55,6 +57,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Command::Uninstall) => uninstall(),
+        Some(Command::Serve) => serve().await,
         Some(Command::Open) | None => open().await,
     }
 }
@@ -292,6 +295,109 @@ async fn open() -> Result<()> {
 
     println!("Y terminated. Identity: {}", identity.address);
     Ok(())
+}
+
+async fn serve() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter("root_chat=info")
+        .init();
+
+    let data_path = data_dir();
+    std::fs::create_dir_all(&data_path)?;
+
+    let storage = Storage::open(&data_path.join("db"))?;
+
+    let identity = match storage.load_identity()? {
+        Some(id) => {
+            info!("Loaded existing identity: {}", id.address);
+            id
+        }
+        None => {
+            let id = Identity::generate();
+            storage.save_identity(&id)?;
+            info!("Generated new identity: {}", id.address);
+            id
+        }
+    };
+
+    let user_alias = match storage.load_alias()? {
+        Some(a) => a,
+        None => {
+            let a = alias::generate_alias();
+            storage.save_alias(&a)?;
+            a
+        }
+    };
+
+    let listen_port = std::env::var("Y_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(7331u16);
+
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+    let engine = Arc::new(NetworkEngine::new(
+        identity.clone(),
+        user_alias,
+        listen_port,
+        data_path,
+        event_tx,
+    ));
+
+    println!("Y mediator starting...");
+    println!("Identity: {}", identity.address);
+
+    let engine_handle = Arc::clone(&engine);
+    tokio::spawn(async move {
+        if let Err(e) = engine_handle.start().await {
+            tracing::error!("Network engine error: {}", e);
+        }
+    });
+
+    let engine_discovery = Arc::clone(&engine);
+    tokio::spawn(async move {
+        engine_discovery.run_discovery_loop().await;
+    });
+
+    let engine_seed = Arc::clone(&engine);
+    tokio::spawn(async move {
+        engine_seed.connect_to_seeds().await;
+    });
+
+    println!("Waiting for Tor hidden service...");
+
+    loop {
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                NetworkEvent::OnionReady(addr) => {
+                    println!();
+                    println!("========================================");
+                    println!("  MEDIATOR ONLINE");
+                    println!("  Onion: {}", addr);
+                    println!("  Port:  {}", listen_port);
+                    println!("  Peer:  {}:{}", addr, listen_port);
+                    println!("========================================");
+                    println!();
+                    println!("Add this to SEED_NODES or use:");
+                    println!("  Y_SEEDS={}:{} y open", addr, listen_port);
+                    println!();
+                }
+                NetworkEvent::PeerConnected { alias, address } => {
+                    println!("[+] Peer connected: {} ({})", alias, address);
+                }
+                NetworkEvent::PeerDisconnected { address } => {
+                    println!("[-] Peer disconnected: {}", address);
+                }
+                NetworkEvent::PeerCountChanged(count) => {
+                    println!("[*] Active peers: {}", count);
+                }
+                NetworkEvent::NewPost(msg) => {
+                    let _ = storage.save_message(&msg);
+                }
+                _ => {}
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
 }
 
 fn copy_to_clipboard(text: &str) {

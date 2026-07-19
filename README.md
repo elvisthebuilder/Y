@@ -91,6 +91,14 @@ Or set a custom port:
 Y_PORT=8080 y open
 ```
 
+### Run as mediator (headless seed node)
+
+```bash
+y serve
+```
+
+Runs the network engine without the TUI — prints the `.onion` address and handles peer connections. Designed for always-on servers that bootstrap the network.
+
 ### Uninstall
 
 ```bash
