@@ -5515,7 +5515,7 @@ checksum = "985eec839aaf2a1270af8f4ebcf63cf9401cfd90f0902f97c28d9f104ffbde72"
 
 [[package]]
 name = "y"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "arti-client",
