@@ -18,6 +18,10 @@ pub enum WireMessage {
 
     // DMs
     DirectMessage(EncryptedEnvelope),
+    RequestPendingDms {
+        recipient: String,
+    },
+    PendingDmsResponse(Vec<EncryptedEnvelope>),
 
     // Peer exchange
     RequestPeers,

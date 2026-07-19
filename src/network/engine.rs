@@ -142,11 +142,14 @@ impl NetworkEngine {
             timestamp: Utc::now(),
         };
 
+        let peer_address;
+
         if initiator {
             framed.send_json(&WireMessage::Hello(my_hello)).await?;
             let response: WireMessage = framed.recv_json().await?;
             match response {
                 WireMessage::HelloAck(peer_hello) => {
+                    peer_address = peer_hello.address.clone();
                     self.register_peer(&peer_hello).await;
                 }
                 _ => return Err(anyhow::anyhow!("unexpected handshake response")),
@@ -155,6 +158,7 @@ impl NetworkEngine {
             let msg: WireMessage = framed.recv_json().await?;
             match msg {
                 WireMessage::Hello(peer_hello) => {
+                    peer_address = peer_hello.address.clone();
                     self.register_peer(&peer_hello).await;
                     framed.send_json(&WireMessage::HelloAck(my_hello)).await?;
                 }
@@ -162,7 +166,19 @@ impl NetworkEngine {
             }
         }
 
-        self.handle_peer_session(framed).await
+        let result = self.handle_peer_session(framed).await;
+
+        // Clean up disconnected peer
+        let mut peers = self.peers.write().await;
+        peers.remove(&peer_address);
+        let count = peers.len();
+        drop(peers);
+        let _ = self.event_tx.send(NetworkEvent::PeerDisconnected {
+            address: peer_address,
+        });
+        let _ = self.event_tx.send(NetworkEvent::PeerCountChanged(count));
+
+        result
     }
 
     async fn register_peer(&self, hello: &HelloPayload) {
@@ -233,6 +249,31 @@ impl NetworkEngine {
                         self.dht_store_dm(&envelope).await;
                     }
                 }
+                WireMessage::RequestPendingDms { recipient } => {
+                    let dms = self.dht.retrieve_dms(&recipient).await;
+                    let envelopes: Vec<EncryptedEnvelope> = dms
+                        .into_iter()
+                        .filter_map(|v| {
+                            if let DhtValue::DirectMessage(stored) = v {
+                                Some(EncryptedEnvelope {
+                                    recipient: recipient.clone(),
+                                    sender: stored.sender,
+                                    ephemeral_public: stored.ephemeral_public,
+                                    nonce: stored.nonce,
+                                    ciphertext: stored.ciphertext,
+                                    timestamp: stored.timestamp,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    framed
+                        .send_json(&WireMessage::PendingDmsResponse(envelopes))
+                        .await?;
+                    self.dht.clear_delivered_dms(&recipient).await;
+                }
+                WireMessage::PendingDmsResponse(_) => {}
                 WireMessage::NodNotify { post_id, from } => {
                     let _ = self
                         .event_tx
@@ -402,6 +443,7 @@ impl NetworkEngine {
     }
 
     async fn fetch_pending_dms(&self) {
+        // Check local DHT first
         let dms = self.dht.retrieve_dms(&self.identity.address).await;
         for dm in dms {
             if let DhtValue::DirectMessage(stored) = dm {
@@ -417,6 +459,47 @@ impl NetworkEngine {
             }
         }
         self.dht.clear_delivered_dms(&self.identity.address).await;
+
+        // Also query connected peers (mediator) for pending DMs
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values().map(|pc| pc.onion_addr.clone()).collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for onion in peers {
+                if let Ok(stream) = tor.connect(&onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let req = WireMessage::RequestPendingDms {
+                            recipient: self.identity.address.clone(),
+                        };
+                        let _ = framed.send_json(&req).await;
+                        if let Ok(WireMessage::PendingDmsResponse(envelopes)) =
+                            framed.recv_json().await
+                        {
+                            for envelope in envelopes {
+                                let _ =
+                                    self.event_tx.send(NetworkEvent::NewDirectMessage(envelope));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub async fn broadcast_post(&self, post: &Message) -> Result<()> {
@@ -758,13 +841,14 @@ impl NetworkEngine {
         self.request_peer_lists().await;
         self.sync_timeline_from_peers().await;
 
-        // Re-announce and discover periodically
+        // Re-announce, discover, and check for pending DMs periodically
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
         loop {
             interval.tick().await;
             self.announce_self().await;
             self.discover_peers().await;
             self.request_peer_lists().await;
+            self.fetch_pending_dms().await;
         }
     }
 
@@ -986,28 +1070,27 @@ impl NetworkEngine {
             p.values().map(|pc| pc.onion_addr.clone()).collect()
         };
 
+        let mut to_connect: Vec<(String, String)> = Vec::new();
+
         let tor_lock = self.tor.read().await;
         if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             for onion in peers {
                 if let Ok(stream) = tor.connect(&onion).await {
                     let mut framed = FramedStream::new(stream);
-
-                    // Send a hello first
-                    let my_onion = tor
-                        .onion_address()
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
                     let hello = HelloPayload {
                         address: self.identity.address.clone(),
                         alias: self.alias.clone(),
                         verifying_key: self.identity.verifying_key.to_bytes(),
-                        listen_addr: my_onion,
+                        listen_addr: my_onion.clone(),
                         timestamp: Utc::now(),
                     };
                     let _ = framed.send_json(&WireMessage::Hello(hello)).await;
                     if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
                         let _ = framed.send_json(&WireMessage::RequestPeers).await;
-                        // Actually read and process the peer list response
                         if let Ok(WireMessage::PeersResponse(new_peers)) = framed.recv_json().await
                         {
                             for peer in new_peers {
@@ -1029,10 +1112,7 @@ impl NetworkEngine {
                                     })
                                     .await;
 
-                                let _ = self.event_tx.send(NetworkEvent::PeerConnected {
-                                    address: peer.address.clone(),
-                                    alias: peer.alias.clone(),
-                                });
+                                to_connect.push((peer.alias.clone(), peer.listen_addr.clone()));
 
                                 info!(
                                     "Discovered peer via mediator: {} ({})",
@@ -1042,6 +1122,13 @@ impl NetworkEngine {
                         }
                     }
                 }
+            }
+        }
+        drop(tor_lock);
+
+        for (alias, listen_addr) in to_connect {
+            if let Err(e) = self.connect_to(&listen_addr).await {
+                warn!("Failed to connect to discovered peer {}: {}", alias, e);
             }
         }
     }
