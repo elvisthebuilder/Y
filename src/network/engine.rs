@@ -142,14 +142,11 @@ impl NetworkEngine {
             timestamp: Utc::now(),
         };
 
-        let peer_address;
-
         if initiator {
             framed.send_json(&WireMessage::Hello(my_hello)).await?;
             let response: WireMessage = framed.recv_json().await?;
             match response {
                 WireMessage::HelloAck(peer_hello) => {
-                    peer_address = peer_hello.address.clone();
                     self.register_peer(&peer_hello).await;
                 }
                 _ => return Err(anyhow::anyhow!("unexpected handshake response")),
@@ -158,7 +155,6 @@ impl NetworkEngine {
             let msg: WireMessage = framed.recv_json().await?;
             match msg {
                 WireMessage::Hello(peer_hello) => {
-                    peer_address = peer_hello.address.clone();
                     self.register_peer(&peer_hello).await;
                     framed.send_json(&WireMessage::HelloAck(my_hello)).await?;
                 }
@@ -166,19 +162,7 @@ impl NetworkEngine {
             }
         }
 
-        let result = self.handle_peer_session(framed).await;
-
-        // Clean up disconnected peer
-        let mut peers = self.peers.write().await;
-        peers.remove(&peer_address);
-        let count = peers.len();
-        drop(peers);
-        let _ = self.event_tx.send(NetworkEvent::PeerDisconnected {
-            address: peer_address,
-        });
-        let _ = self.event_tx.send(NetworkEvent::PeerCountChanged(count));
-
-        result
+        self.handle_peer_session(framed).await
     }
 
     async fn register_peer(&self, hello: &HelloPayload) {
@@ -926,6 +910,9 @@ impl NetworkEngine {
                     self.request_peer_lists().await;
                     self.fetch_pending_dms().await;
                 }
+
+                // Evict dead peers by pinging each one
+                self.evict_dead_peers().await;
             } else {
                 fail_count += 1;
                 // Only mark offline after 3 consecutive failures (~90s)
@@ -934,6 +921,66 @@ impl NetworkEngine {
                     let _ = self.event_tx.send(NetworkEvent::ConnectivityChanged(false));
                     info!("Connectivity lost");
                 }
+            }
+        }
+    }
+
+    async fn evict_dead_peers(&self) {
+        let peer_info: Vec<(String, String)> = {
+            let peers = self.peers.read().await;
+            peers
+                .values()
+                .map(|p| (p.address.clone(), p.onion_addr.clone()))
+                .collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        let tor = match tor_lock.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+
+        let mut dead: Vec<String> = Vec::new();
+        for (address, onion) in &peer_info {
+            let reachable = if let Ok(Ok(stream)) =
+                tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(onion)).await
+            {
+                let mut framed = FramedStream::new(stream);
+                let nonce: u64 = rand::random();
+                if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        framed.recv_json::<WireMessage>(),
+                    )
+                    .await
+                    .is_ok()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !reachable {
+                dead.push(address.clone());
+            }
+        }
+        drop(tor_lock);
+
+        if !dead.is_empty() {
+            let mut peers = self.peers.write().await;
+            for address in &dead {
+                if let Some(peer) = peers.remove(address) {
+                    info!("Evicted dead peer: {} ({})", peer.alias, address);
+                }
+            }
+            let count = peers.len();
+            drop(peers);
+            let _ = self.event_tx.send(NetworkEvent::PeerCountChanged(count));
+            for address in dead {
+                let _ = self
+                    .event_tx
+                    .send(NetworkEvent::PeerDisconnected { address });
             }
         }
     }

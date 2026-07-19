@@ -299,7 +299,6 @@ impl App {
 
         match self.input_mode {
             InputMode::Normal => match key {
-                'q' => self.should_quit = true,
                 't' => {
                     self.view = View::Timeline;
                     self.selected_post = 0;
