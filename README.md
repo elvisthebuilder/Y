@@ -111,6 +111,8 @@ This runs the network engine headless — no TUI, just peer connections. It prin
 Y_PORT=8080 y serve
 ```
 
+Anyone can contribute seed nodes by running `y serve` and opening a PR. The more seeds, the less dependent the network is on any single one.
+
 ### Uninstall
 
 ```bash
