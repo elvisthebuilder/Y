@@ -187,6 +187,7 @@ jobs:
   release:
     name: Create Release
     needs: [build-linux, build-macos, build-windows]
+    if: always() && needs.build-linux.result == 'success' && needs.build-macos.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
