@@ -27,10 +27,18 @@ use crate::storage::Storage;
 use crate::tui::app::App;
 
 #[derive(Parser)]
-#[command(name = "y", about = "Decentralized, anonymous chat over Tor", version)]
+#[command(
+    name = "y",
+    about = "Decentralized, anonymous chat over Tor",
+    version,
+    disable_version_flag = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+
+    #[arg(short = 'v', short_alias = 'V', long = "version", action = clap::ArgAction::Version)]
+    version: (),
 }
 
 #[derive(Subcommand)]
