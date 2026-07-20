@@ -57,6 +57,7 @@ pub struct App {
     pub pending_alias_change: Option<String>,
     pub pending_post: bool,
     pub pending_nod: Option<String>,
+    pub pending_unnod: Option<String>,
     pub pending_bookmark: Option<(String, bool)>,
     pub pending_save: bool,
     pub pending_copy: Option<String>,
@@ -109,6 +110,7 @@ impl App {
             pending_alias_change: None,
             pending_post: false,
             pending_nod: None,
+            pending_unnod: None,
             pending_bookmark: None,
             pending_save: false,
             pending_copy: None,
@@ -627,6 +629,7 @@ impl App {
             if msg.has_nodded(&handle) {
                 msg.nods.retain(|n| n.from != handle);
                 let count = msg.nod_count();
+                self.pending_unnod = Some(id);
                 self.pending_save = true;
                 self.status_message = if count > 0 {
                     format!("Unnodded. ({} nods)", count)

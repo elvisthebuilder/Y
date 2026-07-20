@@ -15,6 +15,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -353,6 +354,7 @@ async fn open() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(identity.address.clone(), handle.clone(), user_alias.clone());
+    let mut seen_dms: HashSet<String> = HashSet::new();
 
     if let Ok(messages) = storage.get_timeline(100) {
         app.timeline = messages;
@@ -391,6 +393,16 @@ async fn open() -> Result<()> {
             match event {
                 NetworkEvent::NewPost(msg) => {
                     if !app.timeline.iter().any(|m| m.id == msg.id) {
+                        if let Some(parent_id) = msg.reply_to.clone() {
+                            if let Some(parent) =
+                                app.timeline.iter_mut().find(|m| m.id == parent_id)
+                            {
+                                if !parent.replies.contains(&msg.id) {
+                                    parent.replies.push(msg.id.clone());
+                                    let _ = storage.save_message(parent);
+                                }
+                            }
+                        }
                         let _ = storage.save_message(&msg);
                         app.timeline.insert(0, msg);
                     }
@@ -407,6 +419,12 @@ async fn open() -> Result<()> {
                         }
                     }
                 }
+                NetworkEvent::NodRemoved { post_id, from } => {
+                    if let Some(msg) = app.timeline.iter_mut().find(|m| m.id == post_id) {
+                        msg.nods.retain(|n| n.from != from);
+                        let _ = storage.save_message(msg);
+                    }
+                }
                 NetworkEvent::PeerCountChanged(count) => {
                     app.peer_count = count;
                 }
@@ -418,6 +436,16 @@ async fn open() -> Result<()> {
                     app.status_message = format!("Peer disconnected: {}", address);
                 }
                 NetworkEvent::NewDirectMessage(envelope) => {
+                    let dm_key = format!(
+                        "{}:{}",
+                        envelope.sender,
+                        envelope.timestamp.timestamp_millis()
+                    );
+                    if seen_dms.contains(&dm_key) {
+                        continue;
+                    }
+                    seen_dms.insert(dm_key);
+
                     let sender_alias = app
                         .known_users
                         .iter()
@@ -514,6 +542,17 @@ async fn open() -> Result<()> {
             let nod_id = post_id.clone();
             tokio::spawn(async move {
                 let _ = engine_nod.broadcast_nod(&nod_id).await;
+            });
+        }
+
+        if let Some(post_id) = app.pending_unnod.take() {
+            if let Some(msg) = app.timeline.iter().find(|m| m.id == post_id) {
+                let _ = storage.save_message(msg);
+            }
+            let engine_unnod = Arc::clone(&engine);
+            let unnod_id = post_id.clone();
+            tokio::spawn(async move {
+                let _ = engine_unnod.broadcast_unnod(&unnod_id).await;
             });
         }
 

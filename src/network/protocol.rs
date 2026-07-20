@@ -32,6 +32,10 @@ pub enum WireMessage {
         post_id: String,
         from: String,
     },
+    NodRemove {
+        post_id: String,
+        from: String,
+    },
 
     // DHT operations
     DhtRequest {

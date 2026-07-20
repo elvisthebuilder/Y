@@ -25,6 +25,7 @@ pub enum NetworkEvent {
     NewPost(Message),
     NewDirectMessage(EncryptedEnvelope),
     NodReceived { post_id: String, from: String },
+    NodRemoved { post_id: String, from: String },
     PeerCountChanged(usize),
     OnionReady(String),
     ConnectivityChanged(bool),
@@ -262,6 +263,11 @@ impl NetworkEngine {
                     let _ = self
                         .event_tx
                         .send(NetworkEvent::NodReceived { post_id, from });
+                }
+                WireMessage::NodRemove { post_id, from } => {
+                    let _ = self
+                        .event_tx
+                        .send(NetworkEvent::NodRemoved { post_id, from });
                 }
                 WireMessage::RequestPeers => {
                     let peers = self.peers.read().await;
@@ -625,6 +631,39 @@ impl NetworkEngine {
 
     pub async fn broadcast_nod(&self, post_id: &str) -> Result<()> {
         let msg = WireMessage::NodNotify {
+            post_id: post_id.to_string(),
+            from: self.identity.address.clone(),
+        };
+
+        let peers = self.peers.read().await;
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for peer in peers.values() {
+                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn broadcast_unnod(&self, post_id: &str) -> Result<()> {
+        let msg = WireMessage::NodRemove {
             post_id: post_id.to_string(),
             from: self.identity.address.clone(),
         };
