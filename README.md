@@ -41,6 +41,17 @@ Every message is cryptographically signed — tampered messages are rejected by 
 - Join requests queue up for private communities — owners navigate and act on each
 - No moderation from above — communities self-govern
 
+## Documentation
+
+The README provides a high-level overview of Y. For more detailed guides and reference material, see the documentation below.
+
+| Document                             | Description                                                                                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Usage Guide](docs/usage.md)         | Step-by-step walkthrough for getting started with Y, creating your identity, navigating the interface, messaging, communities, and bookmarks.                       |
+| [Architecture](docs/architecture.md) | Overview of Y's internal architecture, including identity management, networking, Tor integration, gossip propagation, distributed storage, and application design. |
+| [CLI Reference](docs/cli.md)         | Complete reference for command-line subcommands, interactive commands, keyboard shortcuts, and supported environment variables.                                     |
+
+
 ## Install & Run
 
 ### One-liner (Linux / macOS)
