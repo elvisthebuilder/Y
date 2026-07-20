@@ -121,6 +121,20 @@ y update
 
 Checks GitHub for the latest release and replaces the current binary in-place. Falls back to `sudo` if needed.
 
+### Reset
+
+```bash
+y reset
+```
+
+Clears your timeline, bookmarks, and cached data while keeping your identity and alias intact. Useful after major updates to start fresh without losing who you are.
+
+To also generate a new identity and alias:
+
+```bash
+y reset --new-identity
+```
+
 ### Uninstall
 
 ```bash
@@ -152,7 +166,6 @@ This removes the binary and all local data (`~/.root-chat`).
 | `/` | Search users |
 | `:` | Command mode |
 | `y` | Copy onion address (in Profile) |
-| `q` | Quit |
 
 ### Commands
 - `:whoami` — Show your handle and address
@@ -163,7 +176,7 @@ This removes the binary and all local data (`~/.root-chat`).
 - `:create <name>` — Create an open community
 - `:create <name> private` — Create a private community (approval required)
 - `:join <id>` — Join a community (or request to join if private)
-- `:quit` — Exit
+- `:quit` / `:q` — Exit
 
 ## Identity & Aliases
 

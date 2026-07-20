@@ -50,6 +50,12 @@ enum Command {
     Serve,
     /// Update Y to the latest release
     Update,
+    /// Reset storage — clears timeline, bookmarks, and cached data
+    Reset {
+        /// Also generate a new identity and alias
+        #[arg(long)]
+        new_identity: bool,
+    },
     /// Uninstall Y — remove binary and data
     Uninstall,
 }
@@ -70,6 +76,7 @@ async fn main() -> Result<()> {
         Some(Command::Uninstall) => uninstall(),
         Some(Command::Serve) => serve().await,
         Some(Command::Update) => update(),
+        Some(Command::Reset { new_identity }) => reset(new_identity),
         Some(Command::Open) | None => open().await,
     }
 }
@@ -263,6 +270,47 @@ fn update() -> Result<()> {
         println!("Update failed. Try running with sudo: sudo y update");
     }
 
+    Ok(())
+}
+
+fn reset(new_identity: bool) -> Result<()> {
+    let data_path = data_dir();
+    let db_path = data_path.join("db");
+
+    if !db_path.exists() {
+        println!("Nothing to reset — no database found.");
+        return Ok(());
+    }
+
+    let storage = Storage::open(&db_path)?;
+
+    let identity = storage.load_identity()?;
+    let alias = storage.load_alias()?;
+
+    drop(storage);
+    std::fs::remove_dir_all(&db_path)?;
+
+    let storage = Storage::open(&db_path)?;
+
+    if new_identity {
+        let id = crate::crypto::identity::Identity::generate();
+        let new_alias = crate::crypto::alias::generate_alias();
+        storage.save_identity(&id)?;
+        storage.save_alias(&new_alias)?;
+        let handle = crate::crypto::alias::display_handle(&new_alias, &id.address);
+        println!("Storage cleared. New identity generated.");
+        println!("  Handle: {}", handle);
+    } else {
+        if let Some(id) = identity {
+            storage.save_identity(&id)?;
+        }
+        if let Some(a) = alias {
+            storage.save_alias(&a)?;
+        }
+        println!("Storage cleared. Identity and alias preserved.");
+    }
+
+    println!("Timeline, bookmarks, and cached data have been removed.");
     Ok(())
 }
 
