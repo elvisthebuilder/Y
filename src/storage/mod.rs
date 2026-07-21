@@ -2,6 +2,7 @@ use anyhow::Result;
 use sled::Db;
 use std::path::Path;
 
+use crate::community::Community;
 use crate::crypto::identity::Identity;
 use crate::protocol::message::Message;
 
@@ -113,6 +114,50 @@ impl Storage {
             }
         }
         messages.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
+        Ok(messages)
+    }
+
+    pub fn has_community(&self, id: &str) -> bool {
+        let key = format!("community:{}", id);
+        self.db.get(key.as_bytes()).ok().flatten().is_some()
+    }
+
+    pub fn save_community(&self, community: &Community) -> Result<()> {
+        let key = format!("community:{}", community.id);
+        let value = serde_json::to_vec(community)?;
+        self.db.insert(key.as_bytes(), value)?;
+        Ok(())
+    }
+
+    pub fn load_communities(&self) -> Result<Vec<Community>> {
+        let mut communities = Vec::new();
+        for entry in self.db.scan_prefix(b"community:") {
+            let (_, value) = entry?;
+            if let Ok(c) = serde_json::from_slice::<Community>(&value) {
+                communities.push(c);
+            }
+        }
+        Ok(communities)
+    }
+
+    pub fn save_community_message(&self, community_id: &str, msg: &Message) -> Result<()> {
+        let key = format!("comm_msg:{}:{}", community_id, msg.id);
+        let value = serde_json::to_vec(msg)?;
+        self.db.insert(key.as_bytes(), value)?;
+        Ok(())
+    }
+
+    pub fn get_community_messages(&self, community_id: &str, limit: usize) -> Result<Vec<Message>> {
+        let prefix = format!("comm_msg:{}:", community_id);
+        let mut messages = Vec::new();
+        for entry in self.db.scan_prefix(prefix.as_bytes()) {
+            let (_, value) = entry?;
+            if let Ok(msg) = serde_json::from_slice::<Message>(&value) {
+                messages.push(msg);
+            }
+        }
+        messages.sort_by_key(|m| m.timestamp);
+        messages.truncate(limit);
         Ok(messages)
     }
 

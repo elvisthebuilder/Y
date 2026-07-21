@@ -1,4 +1,5 @@
 use super::dht::{DhtRequest, DhtResponse};
+use crate::community::Community;
 use crate::protocol::message::Message;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,12 @@ pub enum WireMessage {
         request_id: u64,
         response: DhtResponse,
     },
+
+    // Communities
+    BroadcastCommunity(Community),
+    RequestCommunities,
+    CommunitiesResponse(Vec<Community>),
+    CommunityChat(Message),
 
     // Keep-alive
     Ping(u64),

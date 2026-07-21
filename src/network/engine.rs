@@ -12,6 +12,7 @@ use super::dht::{Dht, DhtNode, DhtValue, NodeId, StoredDm, StoredPeerAnnounce, S
 use super::protocol::{EncryptedEnvelope, HelloPayload, PeerAnnounce, WireMessage};
 use super::tor::TorTransport;
 use crate::crypto::identity::Identity;
+use crate::community::Community;
 use crate::protocol::message::Message;
 use crate::storage::Storage;
 
@@ -30,6 +31,8 @@ pub enum NetworkEvent {
     PeerCountChanged(usize),
     OnionReady(String),
     ConnectivityChanged(bool),
+    NewCommunity(Community),
+    CommunityChat(Message),
 }
 
 pub struct NetworkEngine {
@@ -41,6 +44,7 @@ pub struct NetworkEngine {
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     known_posts: Arc<RwLock<Vec<String>>>,
     known_nod_events: Arc<RwLock<Vec<String>>>,
+    known_communities: Arc<RwLock<std::collections::HashSet<String>>>,
     tor: Arc<RwLock<Option<TorTransport>>>,
     pub dht: Arc<Dht>,
     persistent_storage: Option<Arc<Storage>>,
@@ -71,6 +75,7 @@ impl NetworkEngine {
             event_tx,
             known_posts: Arc::new(RwLock::new(Vec::new())),
             known_nod_events: Arc::new(RwLock::new(Vec::new())),
+            known_communities: Arc::new(RwLock::new(std::collections::HashSet::new())),
             tor: Arc::new(RwLock::new(None)),
             dht,
             persistent_storage: None,
@@ -397,6 +402,60 @@ impl NetworkEngine {
                 }
                 WireMessage::DhtResponse { .. } => {
                     // Responses are handled by the requester's task
+                }
+                WireMessage::BroadcastCommunity(community) => {
+                    let mut known = self.known_communities.write().await;
+                    if known.insert(community.id.clone()) {
+                        drop(known);
+                        let _ = self.event_tx.send(NetworkEvent::NewCommunity(community.clone()));
+                        if let Some(storage) = &self.persistent_storage {
+                            if !storage.has_community(&community.id) {
+                                let _ = storage.save_community(&community);
+                            }
+                        }
+                        self.relay_community(&community, peer_address).await;
+                    }
+                }
+                WireMessage::RequestCommunities => {
+                    let communities = if let Some(storage) = &self.persistent_storage {
+                        storage.load_communities().unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    framed
+                        .send_json(&WireMessage::CommunitiesResponse(communities))
+                        .await?;
+                }
+                WireMessage::CommunitiesResponse(communities) => {
+                    for community in communities {
+                        let mut known = self.known_communities.write().await;
+                        if known.insert(community.id.clone()) {
+                            drop(known);
+                            let _ = self.event_tx.send(NetworkEvent::NewCommunity(community.clone()));
+                            if let Some(storage) = &self.persistent_storage {
+                                if !storage.has_community(&community.id) {
+                                    let _ = storage.save_community(&community);
+                                }
+                            }
+                        }
+                    }
+                }
+                WireMessage::CommunityChat(ref chat_msg) => {
+                    let mut known = self.known_posts.write().await;
+                    if !known.contains(&chat_msg.id) {
+                        known.push(chat_msg.id.clone());
+                        if known.len() > 10000 {
+                            known.drain(..5000);
+                        }
+                        drop(known);
+                        let _ = self.event_tx.send(NetworkEvent::CommunityChat(chat_msg.clone()));
+                        if let Some(storage) = &self.persistent_storage {
+                            if let crate::protocol::message::MessageContent::CommunityMessage(ref cm) = chat_msg.content {
+                                let _ = storage.save_community_message(&cm.community_id, chat_msg);
+                            }
+                        }
+                        self.relay_community_chat(chat_msg, peer_address).await;
+                    }
                 }
                 WireMessage::Ping(nonce) => {
                     framed.send_json(&WireMessage::Pong(nonce)).await?;
@@ -925,21 +984,50 @@ impl NetworkEngine {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
 
-        // Initial announce + discovery after a short delay
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        // Wait for seed connections to establish before initial discovery
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         self.announce_self().await;
         self.discover_peers().await;
         self.request_peer_lists().await;
         self.sync_timeline_from_peers().await;
+        self.request_communities().await;
 
-        // Re-announce, discover, and check for pending DMs periodically
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
         loop {
-            interval.tick().await;
+            let peers = self.peer_count().await;
+            if peers == 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                self.reconnect_seeds().await;
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            }
             self.announce_self().await;
             self.discover_peers().await;
             self.request_peer_lists().await;
             self.fetch_pending_dms().await;
+            self.request_communities().await;
+        }
+    }
+
+    async fn reconnect_seeds(self: &Arc<Self>) {
+        let mut seeds: Vec<String> = SEED_NODES.iter().map(|s| s.to_string()).collect();
+        if let Ok(extra) = std::env::var("Y_SEEDS") {
+            for s in extra.split(',') {
+                let trimmed = s.trim().to_string();
+                if !trimmed.is_empty() && !seeds.contains(&trimmed) {
+                    seeds.push(trimmed);
+                }
+            }
+        }
+        for seed in seeds {
+            let engine = Arc::clone(self);
+            tokio::spawn(async move {
+                info!("Reconnecting to seed: {}", seed);
+                match engine.connect_to(&seed).await {
+                    Ok(()) => info!("Reconnected to seed: {}", seed),
+                    Err(e) => warn!("Failed to reconnect to seed {}: {}", seed, e),
+                }
+            });
         }
     }
 
@@ -1256,6 +1344,145 @@ impl NetworkEngine {
         }
     }
 
+    pub async fn broadcast_community(&self, community: &Community) -> Result<()> {
+        let mut known = self.known_communities.write().await;
+        known.insert(community.id.clone());
+        drop(known);
+
+        let msg = WireMessage::BroadcastCommunity(community.clone());
+        let peers = self.peers.read().await;
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for peer in peers.values() {
+                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn broadcast_community_message(&self, message: &Message) -> Result<()> {
+        let mut known = self.known_posts.write().await;
+        known.push(message.id.clone());
+        if known.len() > 10000 {
+            known.drain(..5000);
+        }
+        drop(known);
+
+        let msg = WireMessage::CommunityChat(message.clone());
+        let peers = self.peers.read().await;
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for peer in peers.values() {
+                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn relay_community(&self, community: &Community, sender_address: &str) {
+        let msg = WireMessage::BroadcastCommunity(community.clone());
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values()
+                .filter(|pc| pc.address != sender_address && pc.address != community.owner)
+                .map(|pc| pc.onion_addr.clone())
+                .collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for onion in peers {
+                if let Ok(stream) = tor.connect(&onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let my_onion = tor
+                        .onion_address()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion,
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn relay_community_chat(&self, message: &Message, sender_address: &str) {
+        let msg = WireMessage::CommunityChat(message.clone());
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values()
+                .filter(|pc| pc.address != sender_address && pc.address != message.author)
+                .map(|pc| pc.onion_addr.clone())
+                .collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for onion in peers {
+                if let Ok(stream) = tor.connect(&onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let my_onion = tor
+                        .onion_address()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion,
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn sync_timeline_from_peers(&self) {
         let peers: Vec<String> = {
             let p = self.peers.read().await;
@@ -1373,6 +1600,55 @@ impl NetworkEngine {
                     warn!("Failed to connect to discovered peer {}: {}", alias, e);
                 }
             });
+        }
+    }
+
+    async fn request_communities(&self) {
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values().map(|pc| pc.onion_addr.clone()).collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for onion in peers.iter().take(3) {
+                if let Ok(stream) = tor.connect(onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&WireMessage::RequestCommunities).await;
+                        if let Ok(WireMessage::CommunitiesResponse(communities)) =
+                            framed.recv_json().await
+                        {
+                            for community in communities {
+                                let mut known = self.known_communities.write().await;
+                                if known.insert(community.id.clone()) {
+                                    drop(known);
+                                    let _ = self
+                                        .event_tx
+                                        .send(NetworkEvent::NewCommunity(community.clone()));
+                                    if let Some(storage) = &self.persistent_storage {
+                                        if !storage.has_community(&community.id) {
+                                            let _ = storage.save_community(&community);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

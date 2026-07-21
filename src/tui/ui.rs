@@ -96,6 +96,7 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
         View::Bookmarks => draw_post_list(frame, app, &app.bookmarks, " Bookmarks ", area),
         View::Thread => draw_post_list(frame, app, &app.timeline, " Thread ", area),
         View::CommunityDetail => draw_community_detail(frame, app, area),
+        View::CommunityChat => draw_community_chat(frame, app, area),
     }
 }
 
@@ -475,7 +476,7 @@ fn draw_communities(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(Span::styled(
             format!(
                 "{:^w$}",
-                ":create <name> to start one  ·  :join <id> to join"
+                ":create <name> to start one  ·  :join <name> to join"
             ),
             Style::default().fg(ACCENT),
         )));
@@ -485,7 +486,14 @@ fn draw_communities(frame: &mut Frame, app: &App, area: Rect) {
             let member_count = community.members.len();
             let lock_icon = if community.is_locked { "◆" } else { "◇" };
             let is_owner = community.owner == app.identity_address;
-            let role = if is_owner { "owner" } else { "member" };
+            let is_member = community.is_member(&app.identity_address);
+            let role = if is_owner {
+                "owner"
+            } else if is_member {
+                "member"
+            } else {
+                "not joined"
+            };
             let pending = community.pending_requests.len();
 
             let bg = if is_selected {
@@ -533,7 +541,7 @@ fn draw_communities(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .title(" Communities ")
                 .title_bottom(Line::from(Span::styled(
-                    " :create <name>  :join <id> ",
+                    " :create <name>  :join <name>  [Enter]=open ",
                     Style::default().fg(DIM),
                 )))
                 .borders(Borders::ALL)
@@ -541,6 +549,123 @@ fn draw_communities(frame: &mut Frame, app: &App, area: Rect) {
                 .border_style(Style::default().fg(BORDER_DIM)),
         );
     frame.render_widget(block, area);
+}
+
+fn draw_community_chat(frame: &mut Frame, app: &App, area: Rect) {
+    let community = match app.selected_community.and_then(|i| app.communities.get(i)) {
+        Some(c) => c,
+        None => return,
+    };
+
+    let is_member = community.is_member(&app.identity_address);
+    let messages = app.community_messages.get(&community.id);
+
+    let is_composing = app.input_mode == InputMode::Editing;
+
+    let constraints = if is_composing {
+        vec![Constraint::Min(1), Constraint::Length(3)]
+    } else {
+        vec![Constraint::Min(1)]
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if let Some(msgs) = messages {
+        if msgs.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No messages yet. Press [n] to start the conversation.",
+                Style::default().fg(DIM),
+            )));
+        } else {
+            for msg in msgs {
+                let text = match &msg.content {
+                    MessageContent::CommunityMessage(cm) => cm.text.clone(),
+                    _ => continue,
+                };
+                let time = format_relative_time(&msg.timestamp);
+                let is_own = msg.author == app.handle;
+                let author_style = if is_own {
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(REPLY_COLOR).add_modifier(Modifier::BOLD)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {} ", msg.author), author_style),
+                    Span::styled(time, Style::default().fg(TIME_COLOR)),
+                ]));
+                for line in text.lines() {
+                    lines.push(Line::from(Span::styled(
+                        format!("    {}", line),
+                        Style::default().fg(Color::White),
+                    )));
+                }
+                lines.push(Line::from(""));
+            }
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            if is_member {
+                "  No messages yet. Press [n] to start the conversation."
+            } else {
+                "  Join this community to participate. Use :join <name>"
+            },
+            Style::default().fg(DIM),
+        )));
+    }
+
+    let lock_icon = if community.is_locked { "private" } else { "open" };
+    let title = format!(
+        " {} · {} · {} members ",
+        community.name,
+        lock_icon,
+        community.members.len()
+    );
+
+    let bottom_hint = if is_composing {
+        " [Enter]=send  [Esc]=cancel "
+    } else {
+        " [n]=compose  [i]=members  [Esc]=back "
+    };
+
+    let total = lines.len() as u16;
+    let visible = chunks[0].height.saturating_sub(2);
+    let max_scroll = total.saturating_sub(visible);
+    let scroll = max_scroll.saturating_sub(app.scroll_offset as u16);
+
+    let block = Paragraph::new(lines)
+        .scroll((scroll, 0))
+        .block(
+            Block::default()
+                .title(title)
+                .title_bottom(Line::from(Span::styled(
+                    bottom_hint,
+                    Style::default().fg(DIM),
+                )))
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(BORDER_DIM)),
+        );
+    frame.render_widget(block, chunks[0]);
+
+    if is_composing {
+        let input = Paragraph::new(app.input_buffer.as_str())
+            .block(
+                Block::default()
+                    .title(" Message ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(ACCENT)),
+            );
+        frame.render_widget(input, chunks[1]);
+        frame.set_cursor_position((
+            chunks[1].x + app.cursor_pos as u16 + 1,
+            chunks[1].y + 1,
+        ));
+    }
 }
 
 fn draw_community_detail(frame: &mut Frame, app: &App, area: Rect) {
@@ -684,9 +809,9 @@ fn draw_community_detail(frame: &mut Frame, app: &App, area: Rect) {
         .scroll((app.scroll_offset as u16, 0))
         .block(
             Block::default()
-                .title(format!(" {} ", community.name))
+                .title(format!(" {} — Members ", community.name))
                 .title_bottom(Line::from(Span::styled(
-                    " [Esc]=back  [j/k]=navigate ",
+                    " [Esc]=back to chat  [j/k]=navigate ",
                     Style::default().fg(DIM),
                 )))
                 .borders(Borders::ALL)
