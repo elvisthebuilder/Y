@@ -115,4 +115,25 @@ impl Storage {
         messages.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
         Ok(messages)
     }
+
+    pub fn prune_timeline(&self, max_posts: usize) -> Result<usize> {
+        let mut entries: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        for entry in self.db.scan_prefix(b"msg:") {
+            let (_, value) = entry?;
+            if let Ok(msg) = serde_json::from_slice::<Message>(&value) {
+                entries.push((msg.id, msg.timestamp));
+            }
+        }
+        if entries.len() <= max_posts {
+            return Ok(0);
+        }
+        entries.sort_by_key(|(_, ts)| std::cmp::Reverse(*ts));
+        let mut pruned = 0;
+        for (id, _) in &entries[max_posts..] {
+            let key = format!("msg:{}", id);
+            self.db.remove(key.as_bytes())?;
+            pruned += 1;
+        }
+        Ok(pruned)
+    }
 }

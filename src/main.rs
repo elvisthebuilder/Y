@@ -47,7 +47,11 @@ enum Command {
     /// Open Y — launch the chat interface
     Open,
     /// Run Y as a headless mediator node (no TUI)
-    Serve,
+    Serve {
+        /// Maximum number of timeline posts to keep (oldest pruned when exceeded)
+        #[arg(long, default_value = "1000")]
+        max_posts: usize,
+    },
     /// Update Y to the latest release
     Update,
     /// Reset storage — clears timeline, bookmarks, and cached data
@@ -74,7 +78,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Command::Uninstall) => uninstall(),
-        Some(Command::Serve) => serve().await,
+        Some(Command::Serve { max_posts }) => serve(max_posts).await,
         Some(Command::Update) => update(),
         Some(Command::Reset { new_identity }) => reset(new_identity),
         Some(Command::Open) | None => open().await,
@@ -704,7 +708,7 @@ async fn open() -> Result<()> {
     Ok(())
 }
 
-async fn serve() -> Result<()> {
+async fn serve(max_posts: usize) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("root_chat=info")
         .init();
@@ -741,6 +745,12 @@ async fn serve() -> Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(7331u16);
 
+    if let Ok(pruned) = storage.prune_timeline(max_posts) {
+        if pruned > 0 {
+            println!("Pruned {} old post(s) (max: {})", pruned, max_posts);
+        }
+    }
+
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
     let storage = Arc::new(storage);
     let mut engine = NetworkEngine::new(
@@ -755,6 +765,7 @@ async fn serve() -> Result<()> {
 
     println!("Y mediator starting...");
     println!("Identity: {}", identity.address);
+    println!("Max posts: {}", max_posts);
 
     let engine_handle = Arc::clone(&engine);
     tokio::spawn(async move {
@@ -813,6 +824,7 @@ async fn serve() -> Result<()> {
                         }
                     }
                     let _ = storage.save_message(&msg);
+                    let _ = storage.prune_timeline(max_posts);
                 }
                 NetworkEvent::NodReceived { post_id, from } => {
                     if let Ok(Some(mut msg)) = storage.get_message(&post_id) {

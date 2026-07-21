@@ -109,6 +109,9 @@ This runs the network engine headless — no TUI, just peer connections. It prin
 ```bash
 # Custom port
 Y_PORT=8080 y serve
+
+# Limit stored posts (default: 1000)
+y serve --max-posts 500
 ```
 
 Anyone can contribute seed nodes by running `y serve` and opening a PR. The more seeds, the less dependent the network is on any single one.
