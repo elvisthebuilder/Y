@@ -1,6 +1,8 @@
 # Y
 
-![Mediators](https://img.shields.io/badge/mediators-1-brightgreen)
+![Mediators](https://img.shields.io/badge/mediators-1-brightgreen) ![1000 posts](https://img.shields.io/badge/1000_posts-1-blue)
+
+*Active seed nodes and their timeline capacity.*
 
 > No servers. No accounts. No censorship. Your keys = your identity. Tor = your shield.
 
