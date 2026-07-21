@@ -1057,12 +1057,10 @@ impl App {
         let msg = Message {
             id: format!("{:x}", rand::random::<u64>()),
             author: self.handle.clone(),
-            content: MessageContent::CommunityMessage(
-                crate::protocol::message::CommunityMsg {
-                    community_id: community_id.clone(),
-                    text: self.input_buffer.clone(),
-                },
-            ),
+            content: MessageContent::CommunityMessage(crate::protocol::message::CommunityMsg {
+                community_id: community_id.clone(),
+                text: self.input_buffer.clone(),
+            }),
             timestamp: Utc::now(),
             signature: Vec::new(),
             reply_to: None,

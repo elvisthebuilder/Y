@@ -608,8 +608,7 @@ async fn open() -> Result<()> {
                 NetworkEvent::NewCommunity(community) => {
                     if !app.communities.iter().any(|c| c.id == community.id) {
                         let _ = storage.save_community(&community);
-                        app.status_message =
-                            format!("Discovered community: {}", community.name);
+                        app.status_message = format!("Discovered community: {}", community.name);
                         app.communities.push(community);
                     }
                 }
@@ -619,10 +618,7 @@ async fn open() -> Result<()> {
                     {
                         let community_id = cm.community_id.clone();
                         let _ = storage.save_community_message(&community_id, &msg);
-                        let msgs = app
-                            .community_messages
-                            .entry(community_id)
-                            .or_default();
+                        let msgs = app.community_messages.entry(community_id).or_default();
                         if !msgs.iter().any(|m| m.id == msg.id) {
                             msgs.push(msg);
                         }
@@ -915,12 +911,20 @@ async fn serve(max_posts: usize) -> Result<()> {
                     }
                 }
                 NetworkEvent::NewCommunity(community) => {
-                    println!("[+] Community discovered: {} ({})", community.name, community.id);
+                    println!(
+                        "[+] Community discovered: {} ({})",
+                        community.name, community.id
+                    );
                     let _ = storage.save_community(&community);
                 }
                 NetworkEvent::CommunityChat(msg) => {
-                    if let crate::protocol::message::MessageContent::CommunityMessage(ref cm) = msg.content {
-                        println!("[>] Community message in {}: {}", cm.community_id, msg.author);
+                    if let crate::protocol::message::MessageContent::CommunityMessage(ref cm) =
+                        msg.content
+                    {
+                        println!(
+                            "[>] Community message in {}: {}",
+                            cm.community_id, msg.author
+                        );
                         let _ = storage.save_community_message(&cm.community_id, &msg);
                     }
                 }

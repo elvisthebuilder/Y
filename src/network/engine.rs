@@ -11,8 +11,8 @@ use super::codec::FramedStream;
 use super::dht::{Dht, DhtNode, DhtValue, NodeId, StoredDm, StoredPeerAnnounce, StoredPost};
 use super::protocol::{EncryptedEnvelope, HelloPayload, PeerAnnounce, WireMessage};
 use super::tor::TorTransport;
-use crate::crypto::identity::Identity;
 use crate::community::Community;
+use crate::crypto::identity::Identity;
 use crate::protocol::message::Message;
 use crate::storage::Storage;
 
@@ -407,7 +407,9 @@ impl NetworkEngine {
                     let mut known = self.known_communities.write().await;
                     if known.insert(community.id.clone()) {
                         drop(known);
-                        let _ = self.event_tx.send(NetworkEvent::NewCommunity(community.clone()));
+                        let _ = self
+                            .event_tx
+                            .send(NetworkEvent::NewCommunity(community.clone()));
                         if let Some(storage) = &self.persistent_storage {
                             if !storage.has_community(&community.id) {
                                 let _ = storage.save_community(&community);
@@ -431,7 +433,9 @@ impl NetworkEngine {
                         let mut known = self.known_communities.write().await;
                         if known.insert(community.id.clone()) {
                             drop(known);
-                            let _ = self.event_tx.send(NetworkEvent::NewCommunity(community.clone()));
+                            let _ = self
+                                .event_tx
+                                .send(NetworkEvent::NewCommunity(community.clone()));
                             if let Some(storage) = &self.persistent_storage {
                                 if !storage.has_community(&community.id) {
                                     let _ = storage.save_community(&community);
@@ -448,9 +452,14 @@ impl NetworkEngine {
                             known.drain(..5000);
                         }
                         drop(known);
-                        let _ = self.event_tx.send(NetworkEvent::CommunityChat(chat_msg.clone()));
+                        let _ = self
+                            .event_tx
+                            .send(NetworkEvent::CommunityChat(chat_msg.clone()));
                         if let Some(storage) = &self.persistent_storage {
-                            if let crate::protocol::message::MessageContent::CommunityMessage(ref cm) = chat_msg.content {
+                            if let crate::protocol::message::MessageContent::CommunityMessage(
+                                ref cm,
+                            ) = chat_msg.content
+                            {
                                 let _ = storage.save_community_message(&cm.community_id, chat_msg);
                             }
                         }

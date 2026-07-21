@@ -591,7 +591,9 @@ fn draw_community_chat(frame: &mut Frame, app: &App, area: Rect) {
                 let author_style = if is_own {
                     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(REPLY_COLOR).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(REPLY_COLOR)
+                        .add_modifier(Modifier::BOLD)
                 };
                 lines.push(Line::from(vec![
                     Span::styled(format!("  {} ", msg.author), author_style),
@@ -617,7 +619,11 @@ fn draw_community_chat(frame: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
-    let lock_icon = if community.is_locked { "private" } else { "open" };
+    let lock_icon = if community.is_locked {
+        "private"
+    } else {
+        "open"
+    };
     let title = format!(
         " {} · {} · {} members ",
         community.name,
@@ -636,35 +642,29 @@ fn draw_community_chat(frame: &mut Frame, app: &App, area: Rect) {
     let max_scroll = total.saturating_sub(visible);
     let scroll = max_scroll.saturating_sub(app.scroll_offset as u16);
 
-    let block = Paragraph::new(lines)
-        .scroll((scroll, 0))
-        .block(
-            Block::default()
-                .title(title)
-                .title_bottom(Line::from(Span::styled(
-                    bottom_hint,
-                    Style::default().fg(DIM),
-                )))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(BORDER_DIM)),
-        );
+    let block = Paragraph::new(lines).scroll((scroll, 0)).block(
+        Block::default()
+            .title(title)
+            .title_bottom(Line::from(Span::styled(
+                bottom_hint,
+                Style::default().fg(DIM),
+            )))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(BORDER_DIM)),
+    );
     frame.render_widget(block, chunks[0]);
 
     if is_composing {
-        let input = Paragraph::new(app.input_buffer.as_str())
-            .block(
-                Block::default()
-                    .title(" Message ")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(ACCENT)),
-            );
+        let input = Paragraph::new(app.input_buffer.as_str()).block(
+            Block::default()
+                .title(" Message ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT)),
+        );
         frame.render_widget(input, chunks[1]);
-        frame.set_cursor_position((
-            chunks[1].x + app.cursor_pos as u16 + 1,
-            chunks[1].y + 1,
-        ));
+        frame.set_cursor_position((chunks[1].x + app.cursor_pos as u16 + 1, chunks[1].y + 1));
     }
 }
 
