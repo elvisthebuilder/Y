@@ -411,6 +411,21 @@ async fn open() -> Result<()> {
         app.bookmarks = bookmarks;
     }
 
+    // Reconcile orphaned replies — rebuild parent replies vectors
+    let reply_links: Vec<(String, String)> = app
+        .timeline
+        .iter()
+        .filter_map(|m| m.reply_to.as_ref().map(|pid| (pid.clone(), m.id.clone())))
+        .collect();
+    for (parent_id, reply_id) in reply_links {
+        if let Some(parent) = app.timeline.iter_mut().find(|m| m.id == parent_id) {
+            if !parent.replies.contains(&reply_id) {
+                parent.replies.push(reply_id);
+                let _ = storage.save_message(parent);
+            }
+        }
+    }
+
     loop {
         terminal.draw(|frame| tui::ui::draw(frame, &app))?;
 
@@ -451,8 +466,27 @@ async fn open() -> Result<()> {
                                 }
                             }
                         }
+                        let msg_id = msg.id.clone();
                         let _ = storage.save_message(&msg);
                         app.timeline.insert(0, msg);
+
+                        // Check if any existing replies point to this new post
+                        let orphans: Vec<String> = app
+                            .timeline
+                            .iter()
+                            .filter(|m| m.reply_to.as_deref() == Some(msg_id.as_str()))
+                            .map(|m| m.id.clone())
+                            .collect();
+                        if !orphans.is_empty() {
+                            if let Some(parent) = app.timeline.iter_mut().find(|m| m.id == msg_id) {
+                                for reply_id in orphans {
+                                    if !parent.replies.contains(&reply_id) {
+                                        parent.replies.push(reply_id);
+                                    }
+                                }
+                                let _ = storage.save_message(parent);
+                            }
+                        }
                     }
                 }
                 NetworkEvent::NodReceived { post_id, from } => {
@@ -708,13 +742,16 @@ async fn serve() -> Result<()> {
         .unwrap_or(7331u16);
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
-    let engine = Arc::new(NetworkEngine::new(
+    let storage = Arc::new(storage);
+    let mut engine = NetworkEngine::new(
         identity.clone(),
         user_alias,
         listen_port,
         data_path,
         event_tx,
-    ));
+    );
+    engine.set_persistent_storage(Arc::clone(&storage));
+    let engine = Arc::new(engine);
 
     println!("Y mediator starting...");
     println!("Identity: {}", identity.address);
@@ -767,7 +804,32 @@ async fn serve() -> Result<()> {
                     println!("[*] Active peers: {}", count);
                 }
                 NetworkEvent::NewPost(msg) => {
+                    if let Some(parent_id) = msg.reply_to.as_ref() {
+                        if let Ok(Some(mut parent)) = storage.get_message(parent_id) {
+                            if !parent.replies.contains(&msg.id) {
+                                parent.replies.push(msg.id.clone());
+                                let _ = storage.save_message(&parent);
+                            }
+                        }
+                    }
                     let _ = storage.save_message(&msg);
+                }
+                NetworkEvent::NodReceived { post_id, from } => {
+                    if let Ok(Some(mut msg)) = storage.get_message(&post_id) {
+                        if !msg.nods.iter().any(|n| n.from == from) {
+                            msg.nods.push(crate::protocol::message::Nod {
+                                from,
+                                timestamp: chrono::Utc::now(),
+                            });
+                            let _ = storage.save_message(&msg);
+                        }
+                    }
+                }
+                NetworkEvent::NodRemoved { post_id, from } => {
+                    if let Ok(Some(mut msg)) = storage.get_message(&post_id) {
+                        msg.nods.retain(|n| n.from != from);
+                        let _ = storage.save_message(&msg);
+                    }
                 }
                 NetworkEvent::ConnectivityChanged(online) => {
                     if online {

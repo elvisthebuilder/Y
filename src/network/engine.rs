@@ -13,6 +13,7 @@ use super::protocol::{EncryptedEnvelope, HelloPayload, PeerAnnounce, WireMessage
 use super::tor::TorTransport;
 use crate::crypto::identity::Identity;
 use crate::protocol::message::Message;
+use crate::storage::Storage;
 
 // The Mediator — seed node for initial peer discovery.
 const SEED_NODES: &[&str] =
@@ -42,6 +43,7 @@ pub struct NetworkEngine {
     known_nod_events: Arc<RwLock<Vec<String>>>,
     tor: Arc<RwLock<Option<TorTransport>>>,
     pub dht: Arc<Dht>,
+    persistent_storage: Option<Arc<Storage>>,
 }
 
 struct PeerConnection {
@@ -71,7 +73,12 @@ impl NetworkEngine {
             known_nod_events: Arc::new(RwLock::new(Vec::new())),
             tor: Arc::new(RwLock::new(None)),
             dht,
+            persistent_storage: None,
         }
+    }
+
+    pub fn set_persistent_storage(&mut self, storage: Arc<Storage>) {
+        self.persistent_storage = Some(storage);
     }
 
     pub async fn start(self: Arc<Self>) -> Result<()> {
@@ -440,6 +447,12 @@ impl NetworkEngine {
         _since: Option<chrono::DateTime<Utc>>,
         limit: u32,
     ) -> Vec<Message> {
+        if let Some(ref storage) = self.persistent_storage {
+            if let Ok(messages) = storage.get_timeline(limit as usize) {
+                return messages;
+            }
+        }
+
         let storage = self.dht.storage.read().await;
         let posts = storage.get_all_posts(limit as usize);
         drop(storage);
