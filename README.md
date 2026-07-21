@@ -33,7 +33,7 @@ Every message is cryptographically signed — tampered messages are rejected by 
 - Each user runs a **Tor hidden service** (via arti-client)
 - Your real IP is never exposed — all traffic routed through Tor
 - Peers connect via `.onion` addresses
-- Messages gossip through the network — no central relay
+- Messages gossip through the network — every peer relays to its neighbors
 - **Kademlia DHT** distributes and replicates content across nodes
 - Posts persist even when the author is offline
 - DMs are stored encrypted at the recipient's DHT key until retrieved
@@ -85,7 +85,7 @@ On first run, Y bootstraps the Tor client and creates your hidden service. This 
 
 Y ships with a default seed node called **the mediator**. On startup, your client connects to it automatically and discovers other peers through the DHT. No manual peer configuration needed.
 
-The mediator has no special privileges — it can't read your DMs, censor posts, or control the network. It's just a peer that's always online so new users can find everyone else. If it goes down, existing peers continue talking to each other.
+The mediator has no special privileges — it's just a peer that's always online. It can't read your DMs, censor posts, or control the network. Every peer relays messages the same way; the mediator is simply the one you can always reach. If it goes down, existing peers continue talking to each other.
 
 You can override or add additional seed nodes:
 
