@@ -45,7 +45,11 @@ The application is organized into modular components responsible for cryptograph
 
 Every user owns a cryptographic identity that is generated locally during the first launch.
 
-The identity is based on an Ed25519 keypair used to sign messages and derive the user's permanent address. Since identities are never managed by a central authority, users remain in full control of their credentials and can authenticate messages without relying on external services.
+Y uses an Ed25519 keypair for identity and digital signatures, allowing peers to verify the authenticity of messages without relying on a central authority.
+
+For end-to-end encrypted direct messages, Y derives X25519 keys from the identity to perform an Elliptic-Curve Diffie-Hellman (ECDH) key exchange. The shared secret is then used with ChaCha20Poly1305 to encrypt message contents.
+
+Since identities are generated and stored locally, users remain in full control of their credentials.
 
 ---
 
@@ -54,6 +58,8 @@ The identity is based on an Ed25519 keypair used to sign messages and derive the
 Y communicates exclusively over Tor hidden services. Each node exposes a `.onion` address, allowing peers to establish connections without revealing their public IP addresses.
 
 The networking layer is managed by the `NetworkEngine`, which is responsible for peer connections, message propagation, peer discovery, direct message routing, and coordination with the distributed storage layer.
+
+Some peers can also operate as mediator (seed) nodes. In addition to helping new peers discover the network, mediator nodes temporarily relay public messages and store encrypted direct messages for offline users until they reconnect. They do not control the network or gain access to message contents.
 
 ---
 

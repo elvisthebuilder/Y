@@ -96,7 +96,7 @@ On first run, Y bootstraps the Tor client and creates your hidden service. This 
 
 Y ships with a default seed node called **the mediator**. On startup, your client connects to it automatically and discovers other peers through the DHT. No manual peer configuration needed.
 
-The mediator has no special privileges — it's just a peer that's always online. It can't read your DMs, censor posts, or control the network. Every peer relays messages the same way; the mediator is simply the one you can always reach. If it goes down, existing peers continue talking to each other.
+The mediator has no special privileges — it's just a peer that's always online. It also temporarily stores encrypted direct messages for offline users until they reconnect. It cannot read message contents, censor posts, or control the network.
 
 You can override or add additional seed nodes:
 
@@ -178,7 +178,7 @@ This removes the binary and all local data (`~/.root-chat`).
 | `x` | Delete your post |
 | `g` | Go to post (from bookmarks) |
 | `a` | Approve pending request (community detail) |
-| `x` | Decline pending request (community detail) |
+| `x` | Decline selected join request (community detail) |
 | `Enter` | Expand/collapse replies, open community |
 | `Shift+Enter` | New line while composing |
 | `/` | Search users |

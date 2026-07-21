@@ -101,11 +101,18 @@ Every public post is digitally signed before being broadcast through the network
 
 ## Sending Direct Messages
 
-Direct messages are encrypted before leaving your device.
+To start a direct message:
 
-Only the intended recipient can decrypt the message contents.
+1. Press `/` to search for a user.
+2. Select the desired peer from the search results.
+3. Press `Enter` to open the conversation.
+4. Press `i` to start typing.
+5. Type your message.
+6. Press `Enter` to send it.
 
-If the recipient is temporarily offline, encrypted messages remain available through the distributed network until they are retrieved.
+All direct messages are end-to-end encrypted.
+
+If the recipient is temporarily offline, encrypted messages remain available through the network until they are delivered.
 
 ---
 
@@ -124,7 +131,7 @@ Community owners manage membership requests directly without relying on centrali
 
 ## Searching for Users
 
-Open command mode and use the search command to locate users by alias or address.
+Press `/` to search for users by alias or address.
 
 If multiple users share the same alias, compare their handles to identify the correct person.
 
@@ -155,5 +162,5 @@ Seed nodes help new peers discover the network and improve overall resilience. T
 * Keep your private keys secure.
 * Use aliases to make conversations easier to follow.
 * Leave a seed node running if you have a reliable server.
-* Keep Y updated to receive protocol improvements and bug fixes.
+* Run `y update` regularly to install the latest release.
 * Review the CLI reference for additional commands and configuration options.

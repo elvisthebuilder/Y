@@ -53,12 +53,36 @@ y serve
 
 ## `y update`
 
-Checks GitHub for the latest release and updates the installed binary when a newer version is available.
+Checks for the latest available release and updates the installed binary if a newer version is available.
 
 Example:
 
 ```bash
 y update
+```
+
+---
+
+## `y reset`
+
+Removes local application data including:
+
+- Timeline
+- Bookmarks
+- Cache
+
+Your identity is preserved. Use `--new-identity` to generate a new one.
+
+Example:
+
+```bash
+y reset
+```
+
+To generate a completely new identity as well:
+
+```bash
+y reset --new-identity
 ```
 
 ---
@@ -81,17 +105,18 @@ Inside the application, press `:` to enter command mode.
 
 Available commands include:
 
-| Command                  | Description                        |
-| ------------------------ | ---------------------------------- |
-| `:whoami`                | Display your identity and handle   |
-| `:peers`                 | Show the number of connected peers |
-| `:alias <name>`          | Set a custom alias                 |
-| `:alias-gen`             | Generate a random alias            |
-| `:search <query>`        | Search users                       |
-| `:create <name>`         | Create a public community          |
-| `:create <name> private` | Create a private community         |
-| `:join <id>`             | Join a community                   |
-| `:quit`                  | Exit the application               |
+| Command | Description |
+|---------|-------------|
+| `:whoami` | Display your identity and handle |
+| `:peers` | Show the number of connected peers |
+| `:alias <name>` | Set a custom alias |
+| `:alias-gen` | Generate a random alias |
+| `:search <query>` | Search users |
+| `:create <name>` | Create a public community |
+| `:create <name> private` | Create a private community |
+| `:join <id>` | Join a community |
+| `:q` | Exit the application |
+| `:quit` | Exit the application |
 
 ---
 
@@ -120,14 +145,23 @@ The terminal interface is keyboard-driven.
 
 Some commonly used shortcuts include:
 
-| Key | Action          |
-| --- | --------------- |
-| `t` | Timeline        |
+| Key | Action |
+| --- | ------ |
+| `t` | Timeline |
 | `d` | Direct messages |
-| `c` | Communities     |
-| `b` | Bookmarks       |
-| `p` | Profile         |
-| `n` | New post        |
-| `q` | Quit            |
+| `c` | Communities |
+| `b` | Bookmarks |
+| `p` | Profile |
+| `n` | Compose a new post |
+| `.` | Nod / Like the selected post |
+| `s` | Bookmark the selected post |
+| `r` | Reply to the selected post |
+| `x` | Delete your own selected post |
+| `/` | Search for users |
+| `i` | Start typing in the selected DM conversation |
+| `j` | Move to the next item |
+| `k` | Move to the previous item |
+| `g` | Open the original post from Bookmarks |
+| `Enter` | Open the selected item or expand/collapse a thread |
 
-Refer to the main README for the complete list of available shortcuts.
+
