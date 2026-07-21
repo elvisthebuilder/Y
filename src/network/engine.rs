@@ -814,7 +814,7 @@ impl NetworkEngine {
         info!("Announced self to DHT peer registry");
     }
 
-    pub async fn discover_peers(&self) {
+    pub async fn discover_peers(self: &Arc<Self>) {
         let key = Dht::peer_registry_key();
 
         // Check local DHT storage first
@@ -882,9 +882,14 @@ impl NetworkEngine {
                 .await;
 
             info!("Discovered peer via DHT: {} ({})", peer.alias, peer.address);
-            if let Err(e) = self.connect_to(&peer.onion_addr).await {
-                warn!("Failed to connect to discovered peer {}: {}", peer.alias, e);
-            }
+            let engine = Arc::clone(self);
+            let onion = peer.onion_addr.clone();
+            let alias = peer.alias.clone();
+            tokio::spawn(async move {
+                if let Err(e) = engine.connect_to(&onion).await {
+                    warn!("Failed to connect to discovered peer {}: {}", alias, e);
+                }
+            });
         }
     }
 
@@ -1227,7 +1232,7 @@ impl NetworkEngine {
         }
     }
 
-    async fn request_peer_lists(&self) {
+    async fn request_peer_lists(self: &Arc<Self>) {
         let peers: Vec<String> = {
             let p = self.peers.read().await;
             p.values().map(|pc| pc.onion_addr.clone()).collect()
@@ -1290,9 +1295,12 @@ impl NetworkEngine {
         drop(tor_lock);
 
         for (alias, listen_addr) in to_connect {
-            if let Err(e) = self.connect_to(&listen_addr).await {
-                warn!("Failed to connect to discovered peer {}: {}", alias, e);
-            }
+            let engine = Arc::clone(self);
+            tokio::spawn(async move {
+                if let Err(e) = engine.connect_to(&listen_addr).await {
+                    warn!("Failed to connect to discovered peer {}: {}", alias, e);
+                }
+            });
         }
     }
 }

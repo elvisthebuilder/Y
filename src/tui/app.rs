@@ -691,7 +691,7 @@ impl App {
         };
         let reply_id = reply.id.clone();
 
-        self.timeline.push(reply);
+        self.timeline.insert(0, reply);
         self.pending_post = true;
 
         if let Some(parent_msg) = self.timeline.iter_mut().find(|m| m.id == parent_id) {
