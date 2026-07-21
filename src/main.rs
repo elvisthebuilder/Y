@@ -15,6 +15,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -46,9 +47,19 @@ enum Command {
     /// Open Y — launch the chat interface
     Open,
     /// Run Y as a headless mediator node (no TUI)
-    Serve,
+    Serve {
+        /// Maximum number of timeline posts to keep (oldest pruned when exceeded)
+        #[arg(long, default_value = "1000")]
+        max_posts: usize,
+    },
     /// Update Y to the latest release
     Update,
+    /// Reset storage — clears timeline, bookmarks, and cached data
+    Reset {
+        /// Also generate a new identity and alias
+        #[arg(long)]
+        new_identity: bool,
+    },
     /// Uninstall Y — remove binary and data
     Uninstall,
 }
@@ -67,8 +78,9 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Command::Uninstall) => uninstall(),
-        Some(Command::Serve) => serve().await,
+        Some(Command::Serve { max_posts }) => serve(max_posts).await,
         Some(Command::Update) => update(),
+        Some(Command::Reset { new_identity }) => reset(new_identity),
         Some(Command::Open) | None => open().await,
     }
 }
@@ -265,6 +277,47 @@ fn update() -> Result<()> {
     Ok(())
 }
 
+fn reset(new_identity: bool) -> Result<()> {
+    let data_path = data_dir();
+    let db_path = data_path.join("db");
+
+    if !db_path.exists() {
+        println!("Nothing to reset — no database found.");
+        return Ok(());
+    }
+
+    let storage = Storage::open(&db_path)?;
+
+    let identity = storage.load_identity()?;
+    let alias = storage.load_alias()?;
+
+    drop(storage);
+    std::fs::remove_dir_all(&db_path)?;
+
+    let storage = Storage::open(&db_path)?;
+
+    if new_identity {
+        let id = crate::crypto::identity::Identity::generate();
+        let new_alias = crate::crypto::alias::generate_alias();
+        storage.save_identity(&id)?;
+        storage.save_alias(&new_alias)?;
+        let handle = crate::crypto::alias::display_handle(&new_alias, &id.address);
+        println!("Storage cleared. New identity generated.");
+        println!("  Handle: {}", handle);
+    } else {
+        if let Some(id) = identity {
+            storage.save_identity(&id)?;
+        }
+        if let Some(a) = alias {
+            storage.save_alias(&a)?;
+        }
+        println!("Storage cleared. Identity and alias preserved.");
+    }
+
+    println!("Timeline, bookmarks, and cached data have been removed.");
+    Ok(())
+}
+
 async fn open() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -305,14 +358,18 @@ async fn open() -> Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(7331u16);
 
+    let storage = Arc::new(storage);
+
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
-    let engine = Arc::new(NetworkEngine::new(
+    let mut engine = NetworkEngine::new(
         identity.clone(),
         user_alias.clone(),
         listen_port,
         data_path.clone(),
         event_tx,
-    ));
+    );
+    engine.set_persistent_storage(Arc::clone(&storage));
+    let engine = Arc::new(engine);
 
     let engine_handle = Arc::clone(&engine);
     tokio::spawn(async move {
@@ -353,12 +410,38 @@ async fn open() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(identity.address.clone(), handle.clone(), user_alias.clone());
+    let mut seen_dms: HashSet<String> = HashSet::new();
 
     if let Ok(messages) = storage.get_timeline(100) {
         app.timeline = messages;
     }
     if let Ok(bookmarks) = storage.get_bookmarked_posts() {
         app.bookmarks = bookmarks;
+    }
+    if let Ok(communities) = storage.load_communities() {
+        for community in &communities {
+            if let Ok(msgs) = storage.get_community_messages(&community.id, 200) {
+                if !msgs.is_empty() {
+                    app.community_messages.insert(community.id.clone(), msgs);
+                }
+            }
+        }
+        app.communities = communities;
+    }
+
+    // Reconcile orphaned replies — rebuild parent replies vectors
+    let reply_links: Vec<(String, String)> = app
+        .timeline
+        .iter()
+        .filter_map(|m| m.reply_to.as_ref().map(|pid| (pid.clone(), m.id.clone())))
+        .collect();
+    for (parent_id, reply_id) in reply_links {
+        if let Some(parent) = app.timeline.iter_mut().find(|m| m.id == parent_id) {
+            if !parent.replies.contains(&reply_id) {
+                parent.replies.push(reply_id);
+                let _ = storage.save_message(parent);
+            }
+        }
     }
 
     loop {
@@ -391,8 +474,37 @@ async fn open() -> Result<()> {
             match event {
                 NetworkEvent::NewPost(msg) => {
                     if !app.timeline.iter().any(|m| m.id == msg.id) {
+                        if let Some(parent_id) = msg.reply_to.clone() {
+                            if let Some(parent) =
+                                app.timeline.iter_mut().find(|m| m.id == parent_id)
+                            {
+                                if !parent.replies.contains(&msg.id) {
+                                    parent.replies.push(msg.id.clone());
+                                    let _ = storage.save_message(parent);
+                                }
+                            }
+                        }
+                        let msg_id = msg.id.clone();
                         let _ = storage.save_message(&msg);
                         app.timeline.insert(0, msg);
+
+                        // Check if any existing replies point to this new post
+                        let orphans: Vec<String> = app
+                            .timeline
+                            .iter()
+                            .filter(|m| m.reply_to.as_deref() == Some(msg_id.as_str()))
+                            .map(|m| m.id.clone())
+                            .collect();
+                        if !orphans.is_empty() {
+                            if let Some(parent) = app.timeline.iter_mut().find(|m| m.id == msg_id) {
+                                for reply_id in orphans {
+                                    if !parent.replies.contains(&reply_id) {
+                                        parent.replies.push(reply_id);
+                                    }
+                                }
+                                let _ = storage.save_message(parent);
+                            }
+                        }
                     }
                 }
                 NetworkEvent::NodReceived { post_id, from } => {
@@ -407,6 +519,12 @@ async fn open() -> Result<()> {
                         }
                     }
                 }
+                NetworkEvent::NodRemoved { post_id, from } => {
+                    if let Some(msg) = app.timeline.iter_mut().find(|m| m.id == post_id) {
+                        msg.nods.retain(|n| n.from != from);
+                        let _ = storage.save_message(msg);
+                    }
+                }
                 NetworkEvent::PeerCountChanged(count) => {
                     app.peer_count = count;
                 }
@@ -418,6 +536,16 @@ async fn open() -> Result<()> {
                     app.status_message = format!("Peer disconnected: {}", address);
                 }
                 NetworkEvent::NewDirectMessage(envelope) => {
+                    let dm_key = format!(
+                        "{}:{}",
+                        envelope.sender,
+                        envelope.timestamp.timestamp_millis()
+                    );
+                    if seen_dms.contains(&dm_key) {
+                        continue;
+                    }
+                    seen_dms.insert(dm_key);
+
                     let sender_alias = app
                         .known_users
                         .iter()
@@ -453,7 +581,6 @@ async fn open() -> Result<()> {
                     app.is_online = online;
                     if online {
                         let mut to_broadcast: Vec<_> = app.outbox.drain(..).collect();
-                        // Also re-broadcast recent own posts that peers may have missed
                         let own_posts: Vec<_> = app
                             .timeline
                             .iter()
@@ -476,6 +603,29 @@ async fn open() -> Result<()> {
                         }
                     } else {
                         app.status_message = "Offline — waiting for connection".to_string();
+                    }
+                }
+                NetworkEvent::NewCommunity(community) => {
+                    if !app.communities.iter().any(|c| c.id == community.id) {
+                        let _ = storage.save_community(&community);
+                        app.status_message =
+                            format!("Discovered community: {}", community.name);
+                        app.communities.push(community);
+                    }
+                }
+                NetworkEvent::CommunityChat(msg) => {
+                    if let crate::protocol::message::MessageContent::CommunityMessage(ref cm) =
+                        msg.content
+                    {
+                        let community_id = cm.community_id.clone();
+                        let _ = storage.save_community_message(&community_id, &msg);
+                        let msgs = app
+                            .community_messages
+                            .entry(community_id)
+                            .or_default();
+                        if !msgs.iter().any(|m| m.id == msg.id) {
+                            msgs.push(msg);
+                        }
                     }
                 }
             }
@@ -506,6 +656,31 @@ async fn open() -> Result<()> {
             app.pending_post = false;
         }
 
+        if app.pending_community_broadcast {
+            if let Some(community) = app.communities.last() {
+                let _ = storage.save_community(community);
+                if app.is_online {
+                    let engine_cb = Arc::clone(&engine);
+                    let community_clone = community.clone();
+                    tokio::spawn(async move {
+                        let _ = engine_cb.broadcast_community(&community_clone).await;
+                    });
+                }
+            }
+            app.pending_community_broadcast = false;
+        }
+
+        if let Some((community_id, msg)) = app.pending_community_message.take() {
+            let _ = storage.save_community_message(&community_id, &msg);
+            if app.is_online {
+                let engine_cm = Arc::clone(&engine);
+                let msg_clone = msg;
+                tokio::spawn(async move {
+                    let _ = engine_cm.broadcast_community_message(&msg_clone).await;
+                });
+            }
+        }
+
         if let Some(post_id) = app.pending_nod.take() {
             if let Some(msg) = app.timeline.iter().find(|m| m.id == post_id) {
                 let _ = storage.save_message(msg);
@@ -514,6 +689,17 @@ async fn open() -> Result<()> {
             let nod_id = post_id.clone();
             tokio::spawn(async move {
                 let _ = engine_nod.broadcast_nod(&nod_id).await;
+            });
+        }
+
+        if let Some(post_id) = app.pending_unnod.take() {
+            if let Some(msg) = app.timeline.iter().find(|m| m.id == post_id) {
+                let _ = storage.save_message(msg);
+            }
+            let engine_unnod = Arc::clone(&engine);
+            let unnod_id = post_id.clone();
+            tokio::spawn(async move {
+                let _ = engine_unnod.broadcast_unnod(&unnod_id).await;
             });
         }
 
@@ -568,6 +754,9 @@ async fn open() -> Result<()> {
             for msg in &app.timeline {
                 let _ = storage.save_message(msg);
             }
+            for community in &app.communities {
+                let _ = storage.save_community(community);
+            }
             app.pending_save = false;
         }
 
@@ -583,7 +772,7 @@ async fn open() -> Result<()> {
     Ok(())
 }
 
-async fn serve() -> Result<()> {
+async fn serve(max_posts: usize) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("root_chat=info")
         .init();
@@ -620,17 +809,27 @@ async fn serve() -> Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(7331u16);
 
+    if let Ok(pruned) = storage.prune_timeline(max_posts) {
+        if pruned > 0 {
+            println!("Pruned {} old post(s) (max: {})", pruned, max_posts);
+        }
+    }
+
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
-    let engine = Arc::new(NetworkEngine::new(
+    let storage = Arc::new(storage);
+    let mut engine = NetworkEngine::new(
         identity.clone(),
         user_alias,
         listen_port,
         data_path,
         event_tx,
-    ));
+    );
+    engine.set_persistent_storage(Arc::clone(&storage));
+    let engine = Arc::new(engine);
 
     println!("Y mediator starting...");
     println!("Identity: {}", identity.address);
+    println!("Max posts: {}", max_posts);
 
     let engine_handle = Arc::clone(&engine);
     tokio::spawn(async move {
@@ -680,13 +879,49 @@ async fn serve() -> Result<()> {
                     println!("[*] Active peers: {}", count);
                 }
                 NetworkEvent::NewPost(msg) => {
+                    if let Some(parent_id) = msg.reply_to.as_ref() {
+                        if let Ok(Some(mut parent)) = storage.get_message(parent_id) {
+                            if !parent.replies.contains(&msg.id) {
+                                parent.replies.push(msg.id.clone());
+                                let _ = storage.save_message(&parent);
+                            }
+                        }
+                    }
                     let _ = storage.save_message(&msg);
+                    let _ = storage.prune_timeline(max_posts);
+                }
+                NetworkEvent::NodReceived { post_id, from } => {
+                    if let Ok(Some(mut msg)) = storage.get_message(&post_id) {
+                        if !msg.nods.iter().any(|n| n.from == from) {
+                            msg.nods.push(crate::protocol::message::Nod {
+                                from,
+                                timestamp: chrono::Utc::now(),
+                            });
+                            let _ = storage.save_message(&msg);
+                        }
+                    }
+                }
+                NetworkEvent::NodRemoved { post_id, from } => {
+                    if let Ok(Some(mut msg)) = storage.get_message(&post_id) {
+                        msg.nods.retain(|n| n.from != from);
+                        let _ = storage.save_message(&msg);
+                    }
                 }
                 NetworkEvent::ConnectivityChanged(online) => {
                     if online {
                         println!("[*] Connectivity: ONLINE");
                     } else {
                         println!("[!] Connectivity: OFFLINE");
+                    }
+                }
+                NetworkEvent::NewCommunity(community) => {
+                    println!("[+] Community discovered: {} ({})", community.name, community.id);
+                    let _ = storage.save_community(&community);
+                }
+                NetworkEvent::CommunityChat(msg) => {
+                    if let crate::protocol::message::MessageContent::CommunityMessage(ref cm) = msg.content {
+                        println!("[>] Community message in {}: {}", cm.community_id, msg.author);
+                        let _ = storage.save_community_message(&cm.community_id, &msg);
                     }
                 }
                 _ => {}

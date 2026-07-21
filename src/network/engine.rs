@@ -12,7 +12,9 @@ use super::dht::{Dht, DhtNode, DhtValue, NodeId, StoredDm, StoredPeerAnnounce, S
 use super::protocol::{EncryptedEnvelope, HelloPayload, PeerAnnounce, WireMessage};
 use super::tor::TorTransport;
 use crate::crypto::identity::Identity;
+use crate::community::Community;
 use crate::protocol::message::Message;
+use crate::storage::Storage;
 
 // The Mediator — seed node for initial peer discovery.
 const SEED_NODES: &[&str] =
@@ -25,9 +27,12 @@ pub enum NetworkEvent {
     NewPost(Message),
     NewDirectMessage(EncryptedEnvelope),
     NodReceived { post_id: String, from: String },
+    NodRemoved { post_id: String, from: String },
     PeerCountChanged(usize),
     OnionReady(String),
     ConnectivityChanged(bool),
+    NewCommunity(Community),
+    CommunityChat(Message),
 }
 
 pub struct NetworkEngine {
@@ -38,8 +43,11 @@ pub struct NetworkEngine {
     peers: Arc<RwLock<HashMap<String, PeerConnection>>>,
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     known_posts: Arc<RwLock<Vec<String>>>,
+    known_nod_events: Arc<RwLock<Vec<String>>>,
+    known_communities: Arc<RwLock<std::collections::HashSet<String>>>,
     tor: Arc<RwLock<Option<TorTransport>>>,
     pub dht: Arc<Dht>,
+    persistent_storage: Option<Arc<Storage>>,
 }
 
 struct PeerConnection {
@@ -66,9 +74,16 @@ impl NetworkEngine {
             peers: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             known_posts: Arc::new(RwLock::new(Vec::new())),
+            known_nod_events: Arc::new(RwLock::new(Vec::new())),
+            known_communities: Arc::new(RwLock::new(std::collections::HashSet::new())),
             tor: Arc::new(RwLock::new(None)),
             dht,
+            persistent_storage: None,
         }
+    }
+
+    pub fn set_persistent_storage(&mut self, storage: Arc<Storage>) {
+        self.persistent_storage = Some(storage);
     }
 
     pub async fn start(self: Arc<Self>) -> Result<()> {
@@ -142,12 +157,14 @@ impl NetworkEngine {
             timestamp: Utc::now(),
         };
 
-        if initiator {
+        let peer_address = if initiator {
             framed.send_json(&WireMessage::Hello(my_hello)).await?;
             let response: WireMessage = framed.recv_json().await?;
             match response {
                 WireMessage::HelloAck(peer_hello) => {
+                    let addr = peer_hello.address.clone();
                     self.register_peer(&peer_hello).await;
+                    addr
                 }
                 _ => return Err(anyhow::anyhow!("unexpected handshake response")),
             }
@@ -155,14 +172,16 @@ impl NetworkEngine {
             let msg: WireMessage = framed.recv_json().await?;
             match msg {
                 WireMessage::Hello(peer_hello) => {
+                    let addr = peer_hello.address.clone();
                     self.register_peer(&peer_hello).await;
                     framed.send_json(&WireMessage::HelloAck(my_hello)).await?;
+                    addr
                 }
                 _ => return Err(anyhow::anyhow!("expected Hello")),
             }
-        }
+        };
 
-        self.handle_peer_session(framed).await
+        self.handle_peer_session(framed, &peer_address).await
     }
 
     async fn register_peer(&self, hello: &HelloPayload) {
@@ -197,7 +216,11 @@ impl NetworkEngine {
         info!("Peer registered: {} ({})", hello.alias, hello.address);
     }
 
-    async fn handle_peer_session(&self, mut framed: FramedStream<DataStream>) -> Result<()> {
+    async fn handle_peer_session(
+        &self,
+        mut framed: FramedStream<DataStream>,
+        peer_address: &str,
+    ) -> Result<()> {
         loop {
             let msg: WireMessage = match framed.recv_json().await {
                 Ok(msg) => msg,
@@ -209,6 +232,9 @@ impl NetworkEngine {
                     let mut known = self.known_posts.write().await;
                     if !known.contains(&post.id) {
                         known.push(post.id.clone());
+                        if known.len() > 10000 {
+                            known.drain(..5000);
+                        }
                         drop(known);
                         let _ = self.event_tx.send(NetworkEvent::NewPost(post.clone()));
 
@@ -216,7 +242,7 @@ impl NetworkEngine {
                         self.dht_store_post(&post).await;
 
                         // Relay to other connected peers
-                        self.relay_post(&post).await;
+                        self.relay_post(&post, peer_address).await;
                     }
                 }
                 WireMessage::RequestTimeline { since, limit } => {
@@ -258,10 +284,43 @@ impl NetworkEngine {
                     self.dht.clear_delivered_dms(&recipient).await;
                 }
                 WireMessage::PendingDmsResponse(_) => {}
-                WireMessage::NodNotify { post_id, from } => {
-                    let _ = self
-                        .event_tx
-                        .send(NetworkEvent::NodReceived { post_id, from });
+                WireMessage::NodNotify {
+                    ref post_id,
+                    ref from,
+                } => {
+                    let nod_key = format!("nod:{}:{}", post_id, from);
+                    let mut known = self.known_nod_events.write().await;
+                    if !known.contains(&nod_key) {
+                        known.push(nod_key);
+                        if known.len() > 10000 {
+                            known.drain(..5000);
+                        }
+                        drop(known);
+                        let _ = self.event_tx.send(NetworkEvent::NodReceived {
+                            post_id: post_id.clone(),
+                            from: from.clone(),
+                        });
+                        self.relay_nod_event(&msg, from).await;
+                    }
+                }
+                WireMessage::NodRemove {
+                    ref post_id,
+                    ref from,
+                } => {
+                    let nod_key = format!("unnod:{}:{}", post_id, from);
+                    let mut known = self.known_nod_events.write().await;
+                    if !known.contains(&nod_key) {
+                        known.push(nod_key);
+                        if known.len() > 10000 {
+                            known.drain(..5000);
+                        }
+                        drop(known);
+                        let _ = self.event_tx.send(NetworkEvent::NodRemoved {
+                            post_id: post_id.clone(),
+                            from: from.clone(),
+                        });
+                        self.relay_nod_event(&msg, from).await;
+                    }
                 }
                 WireMessage::RequestPeers => {
                     let peers = self.peers.read().await;
@@ -344,6 +403,60 @@ impl NetworkEngine {
                 WireMessage::DhtResponse { .. } => {
                     // Responses are handled by the requester's task
                 }
+                WireMessage::BroadcastCommunity(community) => {
+                    let mut known = self.known_communities.write().await;
+                    if known.insert(community.id.clone()) {
+                        drop(known);
+                        let _ = self.event_tx.send(NetworkEvent::NewCommunity(community.clone()));
+                        if let Some(storage) = &self.persistent_storage {
+                            if !storage.has_community(&community.id) {
+                                let _ = storage.save_community(&community);
+                            }
+                        }
+                        self.relay_community(&community, peer_address).await;
+                    }
+                }
+                WireMessage::RequestCommunities => {
+                    let communities = if let Some(storage) = &self.persistent_storage {
+                        storage.load_communities().unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    framed
+                        .send_json(&WireMessage::CommunitiesResponse(communities))
+                        .await?;
+                }
+                WireMessage::CommunitiesResponse(communities) => {
+                    for community in communities {
+                        let mut known = self.known_communities.write().await;
+                        if known.insert(community.id.clone()) {
+                            drop(known);
+                            let _ = self.event_tx.send(NetworkEvent::NewCommunity(community.clone()));
+                            if let Some(storage) = &self.persistent_storage {
+                                if !storage.has_community(&community.id) {
+                                    let _ = storage.save_community(&community);
+                                }
+                            }
+                        }
+                    }
+                }
+                WireMessage::CommunityChat(ref chat_msg) => {
+                    let mut known = self.known_posts.write().await;
+                    if !known.contains(&chat_msg.id) {
+                        known.push(chat_msg.id.clone());
+                        if known.len() > 10000 {
+                            known.drain(..5000);
+                        }
+                        drop(known);
+                        let _ = self.event_tx.send(NetworkEvent::CommunityChat(chat_msg.clone()));
+                        if let Some(storage) = &self.persistent_storage {
+                            if let crate::protocol::message::MessageContent::CommunityMessage(ref cm) = chat_msg.content {
+                                let _ = storage.save_community_message(&cm.community_id, chat_msg);
+                            }
+                        }
+                        self.relay_community_chat(chat_msg, peer_address).await;
+                    }
+                }
                 WireMessage::Ping(nonce) => {
                     framed.send_json(&WireMessage::Pong(nonce)).await?;
                 }
@@ -410,6 +523,12 @@ impl NetworkEngine {
         _since: Option<chrono::DateTime<Utc>>,
         limit: u32,
     ) -> Vec<Message> {
+        if let Some(ref storage) = self.persistent_storage {
+            if let Ok(messages) = storage.get_timeline(limit as usize) {
+                return messages;
+            }
+        }
+
         let storage = self.dht.storage.read().await;
         let posts = storage.get_all_posts(limit as usize);
         drop(storage);
@@ -489,6 +608,9 @@ impl NetworkEngine {
     pub async fn broadcast_post(&self, post: &Message) -> Result<()> {
         let mut known = self.known_posts.write().await;
         known.push(post.id.clone());
+        if known.len() > 10000 {
+            known.drain(..5000);
+        }
         drop(known);
 
         // Store in DHT for persistence
@@ -624,7 +746,46 @@ impl NetworkEngine {
     }
 
     pub async fn broadcast_nod(&self, post_id: &str) -> Result<()> {
+        let nod_key = format!("nod:{}:{}", post_id, self.identity.address);
+        self.known_nod_events.write().await.push(nod_key);
+
         let msg = WireMessage::NodNotify {
+            post_id: post_id.to_string(),
+            from: self.identity.address.clone(),
+        };
+
+        let peers = self.peers.read().await;
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for peer in peers.values() {
+                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn broadcast_unnod(&self, post_id: &str) -> Result<()> {
+        let nod_key = format!("unnod:{}:{}", post_id, self.identity.address);
+        self.known_nod_events.write().await.push(nod_key);
+
+        let msg = WireMessage::NodRemove {
             post_id: post_id.to_string(),
             from: self.identity.address.clone(),
         };
@@ -732,7 +893,7 @@ impl NetworkEngine {
         info!("Announced self to DHT peer registry");
     }
 
-    pub async fn discover_peers(&self) {
+    pub async fn discover_peers(self: &Arc<Self>) {
         let key = Dht::peer_registry_key();
 
         // Check local DHT storage first
@@ -800,9 +961,14 @@ impl NetworkEngine {
                 .await;
 
             info!("Discovered peer via DHT: {} ({})", peer.alias, peer.address);
-            if let Err(e) = self.connect_to(&peer.onion_addr).await {
-                warn!("Failed to connect to discovered peer {}: {}", peer.alias, e);
-            }
+            let engine = Arc::clone(self);
+            let onion = peer.onion_addr.clone();
+            let alias = peer.alias.clone();
+            tokio::spawn(async move {
+                if let Err(e) = engine.connect_to(&onion).await {
+                    warn!("Failed to connect to discovered peer {}: {}", alias, e);
+                }
+            });
         }
     }
 
@@ -818,25 +984,54 @@ impl NetworkEngine {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
 
-        // Initial announce + discovery after a short delay
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        // Wait for seed connections to establish before initial discovery
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         self.announce_self().await;
         self.discover_peers().await;
         self.request_peer_lists().await;
         self.sync_timeline_from_peers().await;
+        self.request_communities().await;
 
-        // Re-announce, discover, and check for pending DMs periodically
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
         loop {
-            interval.tick().await;
+            let peers = self.peer_count().await;
+            if peers == 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                self.reconnect_seeds().await;
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            }
             self.announce_self().await;
             self.discover_peers().await;
             self.request_peer_lists().await;
             self.fetch_pending_dms().await;
+            self.request_communities().await;
         }
     }
 
-    pub async fn connect_to_seeds(&self) {
+    async fn reconnect_seeds(self: &Arc<Self>) {
+        let mut seeds: Vec<String> = SEED_NODES.iter().map(|s| s.to_string()).collect();
+        if let Ok(extra) = std::env::var("Y_SEEDS") {
+            for s in extra.split(',') {
+                let trimmed = s.trim().to_string();
+                if !trimmed.is_empty() && !seeds.contains(&trimmed) {
+                    seeds.push(trimmed);
+                }
+            }
+        }
+        for seed in seeds {
+            let engine = Arc::clone(self);
+            tokio::spawn(async move {
+                info!("Reconnecting to seed: {}", seed);
+                match engine.connect_to(&seed).await {
+                    Ok(()) => info!("Reconnected to seed: {}", seed),
+                    Err(e) => warn!("Failed to reconnect to seed {}: {}", seed, e),
+                }
+            });
+        }
+    }
+
+    pub async fn connect_to_seeds(self: &Arc<Self>) {
         // Wait for Tor to be ready
         loop {
             {
@@ -868,12 +1063,15 @@ impl NetworkEngine {
         // Stagger connections slightly to avoid overwhelming Tor
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
-        for seed in &seeds {
-            info!("Connecting to seed node: {}", seed);
-            match self.connect_to(seed).await {
-                Ok(()) => info!("Connected to seed node: {}", seed),
-                Err(e) => warn!("Failed to connect to seed {}: {}", seed, e),
-            }
+        for seed in seeds {
+            let engine = Arc::clone(self);
+            tokio::spawn(async move {
+                info!("Connecting to seed node: {}", seed);
+                match engine.connect_to(&seed).await {
+                    Ok(()) => info!("Connected to seed node: {}", seed),
+                    Err(e) => warn!("Failed to connect to seed {}: {}", seed, e),
+                }
+            });
         }
     }
 
@@ -940,20 +1138,46 @@ impl NetworkEngine {
             None => return,
         };
 
+        let my_onion = tor
+            .onion_address()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
         let mut dead: Vec<String> = Vec::new();
         for (address, onion) in &peer_info {
             let reachable = if let Ok(Ok(stream)) =
                 tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(onion)).await
             {
                 let mut framed = FramedStream::new(stream);
-                let nonce: u64 = rand::random();
-                if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
-                    tokio::time::timeout(
+                let hello = HelloPayload {
+                    address: self.identity.address.clone(),
+                    alias: self.alias.clone(),
+                    verifying_key: self.identity.verifying_key.to_bytes(),
+                    listen_addr: my_onion.clone(),
+                    timestamp: Utc::now(),
+                };
+                if framed.send_json(&WireMessage::Hello(hello)).await.is_ok() {
+                    if let Ok(Ok(WireMessage::HelloAck(_))) = tokio::time::timeout(
                         std::time::Duration::from_secs(10),
                         framed.recv_json::<WireMessage>(),
                     )
                     .await
-                    .is_ok()
+                    {
+                        let nonce: u64 = rand::random();
+                        if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(10),
+                                framed.recv_json::<WireMessage>(),
+                            )
+                            .await
+                            .map(|r| matches!(r, Ok(WireMessage::Pong(_))))
+                            .unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
@@ -986,7 +1210,6 @@ impl NetworkEngine {
     }
 
     async fn check_connectivity(&self) -> bool {
-        // Try pinging any connected peer first
         let peer_addrs: Vec<String> = {
             let peers = self.peers.read().await;
             peers.values().map(|p| p.onion_addr.clone()).collect()
@@ -998,20 +1221,41 @@ impl NetworkEngine {
             None => return false,
         };
 
+        let my_onion = tor
+            .onion_address()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
         for addr in peer_addrs.iter().take(3) {
             if let Ok(Ok(stream)) =
                 tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(addr)).await
             {
                 let mut framed = FramedStream::new(stream);
-                let nonce: u64 = rand::random();
-                if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
-                    if let Ok(Ok(WireMessage::Pong(_))) = tokio::time::timeout(
+                let hello = HelloPayload {
+                    address: self.identity.address.clone(),
+                    alias: self.alias.clone(),
+                    verifying_key: self.identity.verifying_key.to_bytes(),
+                    listen_addr: my_onion.clone(),
+                    timestamp: Utc::now(),
+                };
+                if framed.send_json(&WireMessage::Hello(hello)).await.is_ok() {
+                    if let Ok(Ok(WireMessage::HelloAck(_))) = tokio::time::timeout(
                         std::time::Duration::from_secs(10),
                         framed.recv_json::<WireMessage>(),
                     )
                     .await
                     {
-                        return true;
+                        let nonce: u64 = rand::random();
+                        if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
+                            if let Ok(Ok(WireMessage::Pong(_))) = tokio::time::timeout(
+                                std::time::Duration::from_secs(10),
+                                framed.recv_json::<WireMessage>(),
+                            )
+                            .await
+                            {
+                                return true;
+                            }
+                        }
                     }
                 }
             }
@@ -1031,12 +1275,185 @@ impl NetworkEngine {
         false
     }
 
-    async fn relay_post(&self, post: &Message) {
+    async fn relay_nod_event(&self, msg: &WireMessage, originator: &str) {
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values()
+                .filter(|pc| pc.address != originator)
+                .map(|pc| pc.onion_addr.clone())
+                .collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for onion in peers {
+                if let Ok(stream) = tor.connect(&onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let my_onion = tor
+                        .onion_address()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion,
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(msg).await;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn relay_post(&self, post: &Message, sender_address: &str) {
         let msg = WireMessage::BroadcastPost(post.clone());
         let peers: Vec<String> = {
             let p = self.peers.read().await;
             p.values()
-                .filter(|pc| pc.address != post.author)
+                .filter(|pc| pc.address != sender_address && pc.address != post.author)
+                .map(|pc| pc.onion_addr.clone())
+                .collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for onion in peers {
+                if let Ok(stream) = tor.connect(&onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let my_onion = tor
+                        .onion_address()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion,
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn broadcast_community(&self, community: &Community) -> Result<()> {
+        let mut known = self.known_communities.write().await;
+        known.insert(community.id.clone());
+        drop(known);
+
+        let msg = WireMessage::BroadcastCommunity(community.clone());
+        let peers = self.peers.read().await;
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for peer in peers.values() {
+                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn broadcast_community_message(&self, message: &Message) -> Result<()> {
+        let mut known = self.known_posts.write().await;
+        known.push(message.id.clone());
+        if known.len() > 10000 {
+            known.drain(..5000);
+        }
+        drop(known);
+
+        let msg = WireMessage::CommunityChat(message.clone());
+        let peers = self.peers.read().await;
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for peer in peers.values() {
+                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn relay_community(&self, community: &Community, sender_address: &str) {
+        let msg = WireMessage::BroadcastCommunity(community.clone());
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values()
+                .filter(|pc| pc.address != sender_address && pc.address != community.owner)
+                .map(|pc| pc.onion_addr.clone())
+                .collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for onion in peers {
+                if let Ok(stream) = tor.connect(&onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let my_onion = tor
+                        .onion_address()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion,
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&msg).await;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn relay_community_chat(&self, message: &Message, sender_address: &str) {
+        let msg = WireMessage::CommunityChat(message.clone());
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values()
+                .filter(|pc| pc.address != sender_address && pc.address != message.author)
                 .map(|pc| pc.onion_addr.clone())
                 .collect()
         };
@@ -1100,6 +1517,9 @@ impl NetworkEngine {
                             for post in posts {
                                 if !known.contains(&post.id) {
                                     known.push(post.id.clone());
+                                    if known.len() > 10000 {
+                                        known.drain(..5000);
+                                    }
                                     let _ = self.event_tx.send(NetworkEvent::NewPost(post.clone()));
                                     self.dht_store_post(&post).await;
                                 }
@@ -1111,7 +1531,7 @@ impl NetworkEngine {
         }
     }
 
-    async fn request_peer_lists(&self) {
+    async fn request_peer_lists(self: &Arc<Self>) {
         let peers: Vec<String> = {
             let p = self.peers.read().await;
             p.values().map(|pc| pc.onion_addr.clone()).collect()
@@ -1174,8 +1594,60 @@ impl NetworkEngine {
         drop(tor_lock);
 
         for (alias, listen_addr) in to_connect {
-            if let Err(e) = self.connect_to(&listen_addr).await {
-                warn!("Failed to connect to discovered peer {}: {}", alias, e);
+            let engine = Arc::clone(self);
+            tokio::spawn(async move {
+                if let Err(e) = engine.connect_to(&listen_addr).await {
+                    warn!("Failed to connect to discovered peer {}: {}", alias, e);
+                }
+            });
+        }
+    }
+
+    async fn request_communities(&self) {
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values().map(|pc| pc.onion_addr.clone()).collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for onion in peers.iter().take(3) {
+                if let Ok(stream) = tor.connect(onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion.clone(),
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(&WireMessage::RequestCommunities).await;
+                        if let Ok(WireMessage::CommunitiesResponse(communities)) =
+                            framed.recv_json().await
+                        {
+                            for community in communities {
+                                let mut known = self.known_communities.write().await;
+                                if known.insert(community.id.clone()) {
+                                    drop(known);
+                                    let _ = self
+                                        .event_tx
+                                        .send(NetworkEvent::NewCommunity(community.clone()));
+                                    if let Some(storage) = &self.persistent_storage {
+                                        if !storage.has_community(&community.id) {
+                                            let _ = storage.save_community(&community);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

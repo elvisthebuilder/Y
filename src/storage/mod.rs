@@ -2,6 +2,7 @@ use anyhow::Result;
 use sled::Db;
 use std::path::Path;
 
+use crate::community::Community;
 use crate::crypto::identity::Identity;
 use crate::protocol::message::Message;
 
@@ -80,11 +81,9 @@ impl Storage {
             if let Ok(msg) = serde_json::from_slice::<Message>(&value) {
                 messages.push(msg);
             }
-            if messages.len() >= limit {
-                break;
-            }
         }
         messages.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
+        messages.truncate(limit);
         Ok(messages)
     }
 
@@ -116,5 +115,83 @@ impl Storage {
         }
         messages.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
         Ok(messages)
+    }
+
+    pub fn has_community(&self, id: &str) -> bool {
+        let key = format!("community:{}", id);
+        self.db.get(key.as_bytes()).ok().flatten().is_some()
+    }
+
+    pub fn save_community(&self, community: &Community) -> Result<()> {
+        let key = format!("community:{}", community.id);
+        let value = serde_json::to_vec(community)?;
+        self.db.insert(key.as_bytes(), value)?;
+        Ok(())
+    }
+
+    pub fn load_communities(&self) -> Result<Vec<Community>> {
+        let mut communities = Vec::new();
+        for entry in self.db.scan_prefix(b"community:") {
+            let (_, value) = entry?;
+            if let Ok(c) = serde_json::from_slice::<Community>(&value) {
+                communities.push(c);
+            }
+        }
+        Ok(communities)
+    }
+
+    pub fn save_community_message(&self, community_id: &str, msg: &Message) -> Result<()> {
+        let key = format!("comm_msg:{}:{}", community_id, msg.id);
+        let value = serde_json::to_vec(msg)?;
+        self.db.insert(key.as_bytes(), value)?;
+        Ok(())
+    }
+
+    pub fn get_community_messages(&self, community_id: &str, limit: usize) -> Result<Vec<Message>> {
+        let prefix = format!("comm_msg:{}:", community_id);
+        let mut messages = Vec::new();
+        for entry in self.db.scan_prefix(prefix.as_bytes()) {
+            let (_, value) = entry?;
+            if let Ok(msg) = serde_json::from_slice::<Message>(&value) {
+                messages.push(msg);
+            }
+        }
+        messages.sort_by_key(|m| m.timestamp);
+        messages.truncate(limit);
+        Ok(messages)
+    }
+
+    pub fn prune_timeline(&self, max_posts: usize) -> Result<usize> {
+        let mut top_level: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        let mut reply_parents: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for entry in self.db.scan_prefix(b"msg:") {
+            let (_, value) = entry?;
+            if let Ok(msg) = serde_json::from_slice::<Message>(&value) {
+                if let Some(parent_id) = msg.reply_to {
+                    reply_parents.entry(parent_id).or_default().push(msg.id);
+                } else {
+                    top_level.push((msg.id, msg.timestamp));
+                }
+            }
+        }
+        if top_level.len() <= max_posts {
+            return Ok(0);
+        }
+        top_level.sort_by_key(|(_, ts)| std::cmp::Reverse(*ts));
+        let mut pruned = 0;
+        for (id, _) in &top_level[max_posts..] {
+            let key = format!("msg:{}", id);
+            self.db.remove(key.as_bytes())?;
+            pruned += 1;
+            if let Some(replies) = reply_parents.get(id) {
+                for reply_id in replies {
+                    let rkey = format!("msg:{}", reply_id);
+                    self.db.remove(rkey.as_bytes())?;
+                    pruned += 1;
+                }
+            }
+        }
+        Ok(pruned)
     }
 }

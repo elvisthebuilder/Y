@@ -24,6 +24,7 @@ pub enum View {
     Bookmarks,
     Thread,
     CommunityDetail,
+    CommunityChat,
     DMConversation,
 }
 
@@ -57,6 +58,7 @@ pub struct App {
     pub pending_alias_change: Option<String>,
     pub pending_post: bool,
     pub pending_nod: Option<String>,
+    pub pending_unnod: Option<String>,
     pub pending_bookmark: Option<(String, bool)>,
     pub pending_save: bool,
     pub pending_copy: Option<String>,
@@ -68,6 +70,9 @@ pub struct App {
     pub communities: Vec<Community>,
     pub selected_community: Option<usize>,
     pub selected_list_item: usize,
+    pub community_messages: HashMap<String, Vec<Message>>,
+    pub pending_community_broadcast: bool,
+    pub pending_community_message: Option<(String, Message)>,
     pub known_users: Vec<(String, String)>,
     pub is_online: bool,
     pub selected_search_result: usize,
@@ -109,6 +114,7 @@ impl App {
             pending_alias_change: None,
             pending_post: false,
             pending_nod: None,
+            pending_unnod: None,
             pending_bookmark: None,
             pending_save: false,
             pending_copy: None,
@@ -120,6 +126,9 @@ impl App {
             communities: Vec::new(),
             selected_community: None,
             selected_list_item: 0,
+            community_messages: HashMap::new(),
+            pending_community_broadcast: false,
+            pending_community_message: None,
             known_users: Vec::new(),
             is_online: false,
             selected_search_result: 0,
@@ -361,12 +370,28 @@ impl App {
                 'x' if matches!(self.view, View::Timeline | View::Bookmarks) => {
                     self.prompt_delete();
                 }
+                'n' if self.view == View::CommunityChat => {
+                    if let Some(idx) = self.selected_community {
+                        if let Some(community) = self.communities.get(idx) {
+                            if community.is_member(&self.identity_address) {
+                                self.input_mode = InputMode::Editing;
+                                self.clear_input();
+                            } else {
+                                self.status_message = "Join this community first.".into();
+                            }
+                        }
+                    }
+                }
+                'i' if self.view == View::CommunityChat => {
+                    self.view = View::CommunityDetail;
+                    self.selected_list_item = 0;
+                }
                 '\n' => match self.view {
                     View::Communities => {
                         if !self.communities.is_empty() {
                             self.selected_community = Some(self.selected_list_item);
-                            self.view = View::CommunityDetail;
-                            self.selected_list_item = 0;
+                            self.view = View::CommunityChat;
+                            self.scroll_offset = 0;
                         }
                     }
                     View::DirectMessages => {
@@ -395,10 +420,15 @@ impl App {
                     self.dm_recipient = None;
                     self.selected_list_item = 0;
                 }
-                '\x1b' if self.view == View::CommunityDetail => {
+                '\x1b' if self.view == View::CommunityChat => {
                     self.view = View::Communities;
                     self.selected_list_item = self.selected_community.unwrap_or(0);
                     self.selected_community = None;
+                    self.scroll_offset = 0;
+                }
+                '\x1b' if self.view == View::CommunityDetail => {
+                    self.view = View::CommunityChat;
+                    self.scroll_offset = 0;
                 }
                 'a' if self.view == View::CommunityDetail => {
                     self.approve_selected_request();
@@ -434,6 +464,9 @@ impl App {
                             self.selected_list_item += 1;
                         }
                     }
+                    View::CommunityChat => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    }
                     _ => {
                         self.scroll_offset = self.scroll_offset.saturating_add(1);
                     }
@@ -444,6 +477,9 @@ impl App {
                     }
                     View::Communities | View::CommunityDetail | View::DirectMessages => {
                         self.selected_list_item = self.selected_list_item.saturating_sub(1);
+                    }
+                    View::CommunityChat => {
+                        self.scroll_offset = self.scroll_offset.saturating_add(1);
                     }
                     _ => {
                         self.scroll_offset = self.scroll_offset.saturating_sub(1);
@@ -456,6 +492,8 @@ impl App {
                     self.input_mode = InputMode::Normal;
                     if self.view == View::DMConversation {
                         self.view = View::DirectMessages;
+                    } else if self.view == View::CommunityChat {
+                        // stay in CommunityChat, just cancel compose
                     } else {
                         self.view = View::Timeline;
                     }
@@ -463,6 +501,8 @@ impl App {
                 '\n' => {
                     if self.view == View::DMConversation {
                         self.send_dm_message();
+                    } else if self.view == View::CommunityChat {
+                        self.send_community_message();
                     } else {
                         if !self.input_buffer.trim().is_empty() {
                             let msg = Message {
@@ -627,6 +667,7 @@ impl App {
             if msg.has_nodded(&handle) {
                 msg.nods.retain(|n| n.from != handle);
                 let count = msg.nod_count();
+                self.pending_unnod = Some(id);
                 self.pending_save = true;
                 self.status_message = if count > 0 {
                     format!("Unnodded. ({} nods)", count)
@@ -688,7 +729,7 @@ impl App {
         };
         let reply_id = reply.id.clone();
 
-        self.timeline.push(reply);
+        self.timeline.insert(0, reply);
         self.pending_post = true;
 
         if let Some(parent_msg) = self.timeline.iter_mut().find(|m| m.id == parent_id) {
@@ -794,6 +835,7 @@ impl App {
                         self.status_message =
                             format!("Created {} community '{}' ({})", label, name, community.id);
                         self.communities.push(community);
+                        self.pending_community_broadcast = true;
                         self.view = View::Communities;
                         self.selected_list_item = self.communities.len() - 1;
                     }
@@ -803,13 +845,18 @@ impl App {
             }
             "join" => {
                 if parts.len() > 1 {
-                    let id = parts[1].to_string();
+                    let query = parts[1].to_string();
                     let addr = self.identity_address.clone();
-                    if let Some(community) = self.communities.iter_mut().find(|c| c.id == id) {
+                    if let Some(community) = self
+                        .communities
+                        .iter_mut()
+                        .find(|c| c.id == query || c.name.eq_ignore_ascii_case(&query))
+                    {
                         match community.request_join(&addr) {
                             JoinResult::Joined => {
                                 self.status_message =
                                     format!("Joined community '{}'.", community.name);
+                                self.pending_save = true;
                             }
                             JoinResult::Pending => {
                                 self.status_message = format!(
@@ -827,11 +874,11 @@ impl App {
                             }
                         }
                     } else {
-                        self.status_message = format!("Community '{}' not found.", id);
+                        self.status_message = format!("Community '{}' not found.", query);
                     }
                     self.view = View::Communities;
                 } else {
-                    self.status_message = "Usage: :join <id>".into();
+                    self.status_message = "Usage: :join <name or id>".into();
                 }
             }
             "search" => {
@@ -994,6 +1041,42 @@ impl App {
             self.pending_dm = Some((address, text));
             self.clear_input();
         }
+    }
+
+    fn send_community_message(&mut self) {
+        if self.input_buffer.trim().is_empty() {
+            return;
+        }
+        let community_id = match self
+            .selected_community
+            .and_then(|i| self.communities.get(i))
+        {
+            Some(c) => c.id.clone(),
+            None => return,
+        };
+        let msg = Message {
+            id: format!("{:x}", rand::random::<u64>()),
+            author: self.handle.clone(),
+            content: MessageContent::CommunityMessage(
+                crate::protocol::message::CommunityMsg {
+                    community_id: community_id.clone(),
+                    text: self.input_buffer.clone(),
+                },
+            ),
+            timestamp: Utc::now(),
+            signature: Vec::new(),
+            reply_to: None,
+            nods: Vec::new(),
+            replies: Vec::new(),
+        };
+        self.community_messages
+            .entry(community_id.clone())
+            .or_default()
+            .push(msg.clone());
+        self.pending_community_message = Some((community_id, msg));
+        self.clear_input();
+        self.input_mode = InputMode::Normal;
+        self.scroll_offset = 0;
     }
 
     pub fn receive_dm(&mut self, from_address: String, from_alias: String, text: String) {

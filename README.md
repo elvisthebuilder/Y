@@ -1,5 +1,9 @@
 # Y
 
+![Mediators](https://img.shields.io/badge/mediators-1-brightgreen) ![1000 posts](https://img.shields.io/badge/1000_posts-1-blue)
+
+*Active seed nodes and their timeline capacity.*
+
 > No servers. No accounts. No censorship. Your keys = your identity. Tor = your shield.
 
 Y is a decentralized, anonymous chat platform built in Rust. It runs over the Tor network with cryptographic identity — no signups, no emails, no phone numbers. You are your keypair.
@@ -29,7 +33,7 @@ Every message is cryptographically signed — tampered messages are rejected by 
 - Each user runs a **Tor hidden service** (via arti-client)
 - Your real IP is never exposed — all traffic routed through Tor
 - Peers connect via `.onion` addresses
-- Messages gossip through the network — no central relay
+- Messages gossip through the network — every peer relays to its neighbors
 - **Kademlia DHT** distributes and replicates content across nodes
 - Posts persist even when the author is offline
 - DMs are stored encrypted at the recipient's DHT key until retrieved
@@ -92,7 +96,7 @@ On first run, Y bootstraps the Tor client and creates your hidden service. This 
 
 Y ships with a default seed node called **the mediator**. On startup, your client connects to it automatically and discovers other peers through the DHT. No manual peer configuration needed.
 
-The mediator has no special privileges — it can't read your DMs, censor posts, or control the network. It's just a peer that's always online so new users can find everyone else. If it goes down, existing peers continue talking to each other.
+The mediator has no special privileges — it's just a peer that's always online. It can't read your DMs, censor posts, or control the network. Every peer relays messages the same way; the mediator is simply the one you can always reach. If it goes down, existing peers continue talking to each other.
 
 You can override or add additional seed nodes:
 
@@ -120,6 +124,9 @@ This runs the network engine headless — no TUI, just peer connections. It prin
 ```bash
 # Custom port
 Y_PORT=8080 y serve
+
+# Limit stored posts (default: 1000)
+y serve --max-posts 500
 ```
 
 Anyone can contribute seed nodes by running `y serve` and opening a PR. The more seeds, the less dependent the network is on any single one.
@@ -131,6 +138,20 @@ y update
 ```
 
 Checks GitHub for the latest release and replaces the current binary in-place. Falls back to `sudo` if needed.
+
+### Reset
+
+```bash
+y reset
+```
+
+Clears your timeline, bookmarks, and cached data while keeping your identity and alias intact. Useful after major updates to start fresh without losing who you are.
+
+To also generate a new identity and alias:
+
+```bash
+y reset --new-identity
+```
 
 ### Uninstall
 
@@ -163,7 +184,6 @@ This removes the binary and all local data (`~/.root-chat`).
 | `/` | Search users |
 | `:` | Command mode |
 | `y` | Copy onion address (in Profile) |
-| `q` | Quit |
 
 ### Commands
 - `:whoami` — Show your handle and address
@@ -174,7 +194,7 @@ This removes the binary and all local data (`~/.root-chat`).
 - `:create <name>` — Create an open community
 - `:create <name> private` — Create a private community (approval required)
 - `:join <id>` — Join a community (or request to join if private)
-- `:quit` — Exit
+- `:quit` / `:q` — Exit
 
 ## Identity & Aliases
 
