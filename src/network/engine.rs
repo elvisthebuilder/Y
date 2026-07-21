@@ -152,12 +152,14 @@ impl NetworkEngine {
             timestamp: Utc::now(),
         };
 
-        if initiator {
+        let peer_address = if initiator {
             framed.send_json(&WireMessage::Hello(my_hello)).await?;
             let response: WireMessage = framed.recv_json().await?;
             match response {
                 WireMessage::HelloAck(peer_hello) => {
+                    let addr = peer_hello.address.clone();
                     self.register_peer(&peer_hello).await;
+                    addr
                 }
                 _ => return Err(anyhow::anyhow!("unexpected handshake response")),
             }
@@ -165,14 +167,16 @@ impl NetworkEngine {
             let msg: WireMessage = framed.recv_json().await?;
             match msg {
                 WireMessage::Hello(peer_hello) => {
+                    let addr = peer_hello.address.clone();
                     self.register_peer(&peer_hello).await;
                     framed.send_json(&WireMessage::HelloAck(my_hello)).await?;
+                    addr
                 }
                 _ => return Err(anyhow::anyhow!("expected Hello")),
             }
-        }
+        };
 
-        self.handle_peer_session(framed).await
+        self.handle_peer_session(framed, &peer_address).await
     }
 
     async fn register_peer(&self, hello: &HelloPayload) {
@@ -207,7 +211,11 @@ impl NetworkEngine {
         info!("Peer registered: {} ({})", hello.alias, hello.address);
     }
 
-    async fn handle_peer_session(&self, mut framed: FramedStream<DataStream>) -> Result<()> {
+    async fn handle_peer_session(
+        &self,
+        mut framed: FramedStream<DataStream>,
+        peer_address: &str,
+    ) -> Result<()> {
         loop {
             let msg: WireMessage = match framed.recv_json().await {
                 Ok(msg) => msg,
@@ -219,6 +227,9 @@ impl NetworkEngine {
                     let mut known = self.known_posts.write().await;
                     if !known.contains(&post.id) {
                         known.push(post.id.clone());
+                        if known.len() > 10000 {
+                            known.drain(..5000);
+                        }
                         drop(known);
                         let _ = self.event_tx.send(NetworkEvent::NewPost(post.clone()));
 
@@ -226,7 +237,7 @@ impl NetworkEngine {
                         self.dht_store_post(&post).await;
 
                         // Relay to other connected peers
-                        self.relay_post(&post).await;
+                        self.relay_post(&post, peer_address).await;
                     }
                 }
                 WireMessage::RequestTimeline { since, limit } => {
@@ -276,6 +287,9 @@ impl NetworkEngine {
                     let mut known = self.known_nod_events.write().await;
                     if !known.contains(&nod_key) {
                         known.push(nod_key);
+                        if known.len() > 10000 {
+                            known.drain(..5000);
+                        }
                         drop(known);
                         let _ = self.event_tx.send(NetworkEvent::NodReceived {
                             post_id: post_id.clone(),
@@ -292,6 +306,9 @@ impl NetworkEngine {
                     let mut known = self.known_nod_events.write().await;
                     if !known.contains(&nod_key) {
                         known.push(nod_key);
+                        if known.len() > 10000 {
+                            known.drain(..5000);
+                        }
                         drop(known);
                         let _ = self.event_tx.send(NetworkEvent::NodRemoved {
                             post_id: post_id.clone(),
@@ -532,6 +549,9 @@ impl NetworkEngine {
     pub async fn broadcast_post(&self, post: &Message) -> Result<()> {
         let mut known = self.known_posts.write().await;
         known.push(post.id.clone());
+        if known.len() > 10000 {
+            known.drain(..5000);
+        }
         drop(known);
 
         // Store in DHT for persistence
@@ -923,7 +943,7 @@ impl NetworkEngine {
         }
     }
 
-    pub async fn connect_to_seeds(&self) {
+    pub async fn connect_to_seeds(self: &Arc<Self>) {
         // Wait for Tor to be ready
         loop {
             {
@@ -955,12 +975,15 @@ impl NetworkEngine {
         // Stagger connections slightly to avoid overwhelming Tor
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
-        for seed in &seeds {
-            info!("Connecting to seed node: {}", seed);
-            match self.connect_to(seed).await {
-                Ok(()) => info!("Connected to seed node: {}", seed),
-                Err(e) => warn!("Failed to connect to seed {}: {}", seed, e),
-            }
+        for seed in seeds {
+            let engine = Arc::clone(self);
+            tokio::spawn(async move {
+                info!("Connecting to seed node: {}", seed);
+                match engine.connect_to(&seed).await {
+                    Ok(()) => info!("Connected to seed node: {}", seed),
+                    Err(e) => warn!("Failed to connect to seed {}: {}", seed, e),
+                }
+            });
         }
     }
 
@@ -1027,20 +1050,46 @@ impl NetworkEngine {
             None => return,
         };
 
+        let my_onion = tor
+            .onion_address()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
         let mut dead: Vec<String> = Vec::new();
         for (address, onion) in &peer_info {
             let reachable = if let Ok(Ok(stream)) =
                 tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(onion)).await
             {
                 let mut framed = FramedStream::new(stream);
-                let nonce: u64 = rand::random();
-                if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
-                    tokio::time::timeout(
+                let hello = HelloPayload {
+                    address: self.identity.address.clone(),
+                    alias: self.alias.clone(),
+                    verifying_key: self.identity.verifying_key.to_bytes(),
+                    listen_addr: my_onion.clone(),
+                    timestamp: Utc::now(),
+                };
+                if framed.send_json(&WireMessage::Hello(hello)).await.is_ok() {
+                    if let Ok(Ok(WireMessage::HelloAck(_))) = tokio::time::timeout(
                         std::time::Duration::from_secs(10),
                         framed.recv_json::<WireMessage>(),
                     )
                     .await
-                    .is_ok()
+                    {
+                        let nonce: u64 = rand::random();
+                        if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(10),
+                                framed.recv_json::<WireMessage>(),
+                            )
+                            .await
+                            .map(|r| matches!(r, Ok(WireMessage::Pong(_))))
+                            .unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
@@ -1073,7 +1122,6 @@ impl NetworkEngine {
     }
 
     async fn check_connectivity(&self) -> bool {
-        // Try pinging any connected peer first
         let peer_addrs: Vec<String> = {
             let peers = self.peers.read().await;
             peers.values().map(|p| p.onion_addr.clone()).collect()
@@ -1085,20 +1133,41 @@ impl NetworkEngine {
             None => return false,
         };
 
+        let my_onion = tor
+            .onion_address()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
         for addr in peer_addrs.iter().take(3) {
             if let Ok(Ok(stream)) =
                 tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(addr)).await
             {
                 let mut framed = FramedStream::new(stream);
-                let nonce: u64 = rand::random();
-                if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
-                    if let Ok(Ok(WireMessage::Pong(_))) = tokio::time::timeout(
+                let hello = HelloPayload {
+                    address: self.identity.address.clone(),
+                    alias: self.alias.clone(),
+                    verifying_key: self.identity.verifying_key.to_bytes(),
+                    listen_addr: my_onion.clone(),
+                    timestamp: Utc::now(),
+                };
+                if framed.send_json(&WireMessage::Hello(hello)).await.is_ok() {
+                    if let Ok(Ok(WireMessage::HelloAck(_))) = tokio::time::timeout(
                         std::time::Duration::from_secs(10),
                         framed.recv_json::<WireMessage>(),
                     )
                     .await
                     {
-                        return true;
+                        let nonce: u64 = rand::random();
+                        if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
+                            if let Ok(Ok(WireMessage::Pong(_))) = tokio::time::timeout(
+                                std::time::Duration::from_secs(10),
+                                framed.recv_json::<WireMessage>(),
+                            )
+                            .await
+                            {
+                                return true;
+                            }
+                        }
                     }
                 }
             }
@@ -1152,12 +1221,12 @@ impl NetworkEngine {
         }
     }
 
-    async fn relay_post(&self, post: &Message) {
+    async fn relay_post(&self, post: &Message, sender_address: &str) {
         let msg = WireMessage::BroadcastPost(post.clone());
         let peers: Vec<String> = {
             let p = self.peers.read().await;
             p.values()
-                .filter(|pc| pc.address != post.author)
+                .filter(|pc| pc.address != sender_address && pc.address != post.author)
                 .map(|pc| pc.onion_addr.clone())
                 .collect()
         };
@@ -1221,6 +1290,9 @@ impl NetworkEngine {
                             for post in posts {
                                 if !known.contains(&post.id) {
                                     known.push(post.id.clone());
+                                    if known.len() > 10000 {
+                                        known.drain(..5000);
+                                    }
                                     let _ = self.event_tx.send(NetworkEvent::NewPost(post.clone()));
                                     self.dht_store_post(&post).await;
                                 }

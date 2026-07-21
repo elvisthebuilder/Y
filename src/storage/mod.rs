@@ -80,11 +80,9 @@ impl Storage {
             if let Ok(msg) = serde_json::from_slice::<Message>(&value) {
                 messages.push(msg);
             }
-            if messages.len() >= limit {
-                break;
-            }
         }
         messages.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
+        messages.truncate(limit);
         Ok(messages)
     }
 
