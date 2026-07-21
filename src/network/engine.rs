@@ -39,6 +39,7 @@ pub struct NetworkEngine {
     peers: Arc<RwLock<HashMap<String, PeerConnection>>>,
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     known_posts: Arc<RwLock<Vec<String>>>,
+    known_nod_events: Arc<RwLock<Vec<String>>>,
     tor: Arc<RwLock<Option<TorTransport>>>,
     pub dht: Arc<Dht>,
 }
@@ -67,6 +68,7 @@ impl NetworkEngine {
             peers: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             known_posts: Arc::new(RwLock::new(Vec::new())),
+            known_nod_events: Arc::new(RwLock::new(Vec::new())),
             tor: Arc::new(RwLock::new(None)),
             dht,
         }
@@ -259,15 +261,37 @@ impl NetworkEngine {
                     self.dht.clear_delivered_dms(&recipient).await;
                 }
                 WireMessage::PendingDmsResponse(_) => {}
-                WireMessage::NodNotify { post_id, from } => {
-                    let _ = self
-                        .event_tx
-                        .send(NetworkEvent::NodReceived { post_id, from });
+                WireMessage::NodNotify {
+                    ref post_id,
+                    ref from,
+                } => {
+                    let nod_key = format!("nod:{}:{}", post_id, from);
+                    let mut known = self.known_nod_events.write().await;
+                    if !known.contains(&nod_key) {
+                        known.push(nod_key);
+                        drop(known);
+                        let _ = self.event_tx.send(NetworkEvent::NodReceived {
+                            post_id: post_id.clone(),
+                            from: from.clone(),
+                        });
+                        self.relay_nod_event(&msg, from).await;
+                    }
                 }
-                WireMessage::NodRemove { post_id, from } => {
-                    let _ = self
-                        .event_tx
-                        .send(NetworkEvent::NodRemoved { post_id, from });
+                WireMessage::NodRemove {
+                    ref post_id,
+                    ref from,
+                } => {
+                    let nod_key = format!("unnod:{}:{}", post_id, from);
+                    let mut known = self.known_nod_events.write().await;
+                    if !known.contains(&nod_key) {
+                        known.push(nod_key);
+                        drop(known);
+                        let _ = self.event_tx.send(NetworkEvent::NodRemoved {
+                            post_id: post_id.clone(),
+                            from: from.clone(),
+                        });
+                        self.relay_nod_event(&msg, from).await;
+                    }
                 }
                 WireMessage::RequestPeers => {
                     let peers = self.peers.read().await;
@@ -630,6 +654,9 @@ impl NetworkEngine {
     }
 
     pub async fn broadcast_nod(&self, post_id: &str) -> Result<()> {
+        let nod_key = format!("nod:{}:{}", post_id, self.identity.address);
+        self.known_nod_events.write().await.push(nod_key);
+
         let msg = WireMessage::NodNotify {
             post_id: post_id.to_string(),
             from: self.identity.address.clone(),
@@ -663,6 +690,9 @@ impl NetworkEngine {
     }
 
     pub async fn broadcast_unnod(&self, post_id: &str) -> Result<()> {
+        let nod_key = format!("unnod:{}:{}", post_id, self.identity.address);
+        self.known_nod_events.write().await.push(nod_key);
+
         let msg = WireMessage::NodRemove {
             post_id: post_id.to_string(),
             from: self.identity.address.clone(),
@@ -1068,6 +1098,40 @@ impl NetworkEngine {
         }
 
         false
+    }
+
+    async fn relay_nod_event(&self, msg: &WireMessage, originator: &str) {
+        let peers: Vec<String> = {
+            let p = self.peers.read().await;
+            p.values()
+                .filter(|pc| pc.address != originator)
+                .map(|pc| pc.onion_addr.clone())
+                .collect()
+        };
+
+        let tor_lock = self.tor.read().await;
+        if let Some(tor) = tor_lock.as_ref() {
+            for onion in peers {
+                if let Ok(stream) = tor.connect(&onion).await {
+                    let mut framed = FramedStream::new(stream);
+                    let my_onion = tor
+                        .onion_address()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let hello = HelloPayload {
+                        address: self.identity.address.clone(),
+                        alias: self.alias.clone(),
+                        verifying_key: self.identity.verifying_key.to_bytes(),
+                        listen_addr: my_onion,
+                        timestamp: Utc::now(),
+                    };
+                    let _ = framed.send_json(&WireMessage::Hello(hello)).await;
+                    if let Ok(WireMessage::HelloAck(_)) = framed.recv_json().await {
+                        let _ = framed.send_json(msg).await;
+                    }
+                }
+            }
+        }
     }
 
     async fn relay_post(&self, post: &Message) {
