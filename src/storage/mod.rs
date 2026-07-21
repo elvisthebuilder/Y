@@ -117,22 +117,35 @@ impl Storage {
     }
 
     pub fn prune_timeline(&self, max_posts: usize) -> Result<usize> {
-        let mut entries: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        let mut top_level: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        let mut reply_parents: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         for entry in self.db.scan_prefix(b"msg:") {
             let (_, value) = entry?;
             if let Ok(msg) = serde_json::from_slice::<Message>(&value) {
-                entries.push((msg.id, msg.timestamp));
+                if let Some(parent_id) = msg.reply_to {
+                    reply_parents.entry(parent_id).or_default().push(msg.id);
+                } else {
+                    top_level.push((msg.id, msg.timestamp));
+                }
             }
         }
-        if entries.len() <= max_posts {
+        if top_level.len() <= max_posts {
             return Ok(0);
         }
-        entries.sort_by_key(|(_, ts)| std::cmp::Reverse(*ts));
+        top_level.sort_by_key(|(_, ts)| std::cmp::Reverse(*ts));
         let mut pruned = 0;
-        for (id, _) in &entries[max_posts..] {
+        for (id, _) in &top_level[max_posts..] {
             let key = format!("msg:{}", id);
             self.db.remove(key.as_bytes())?;
             pruned += 1;
+            if let Some(replies) = reply_parents.get(id) {
+                for reply_id in replies {
+                    let rkey = format!("msg:{}", reply_id);
+                    self.db.remove(rkey.as_bytes())?;
+                    pruned += 1;
+                }
+            }
         }
         Ok(pruned)
     }

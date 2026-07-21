@@ -1,5 +1,7 @@
 # Y
 
+![Mediators](https://img.shields.io/badge/mediators-1-brightgreen)
+
 > No servers. No accounts. No censorship. Your keys = your identity. Tor = your shield.
 
 Y is a decentralized, anonymous chat platform built in Rust. It runs over the Tor network with cryptographic identity — no signups, no emails, no phone numbers. You are your keypair.
