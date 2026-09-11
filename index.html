@@ -198,7 +198,24 @@
         <a href="https://github.com/elvisthebuilder/Y" class="btn-primary text-sm">View Source</a>
     </nav>
 
-    <header class="relative max-w-4xl mx-auto px-6 py-24 text-center overflow-hidden animate-fade-in">
+    <!-- Mobile Bottom Nav -->
+    <div class="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-bg border-t border-color px-6 py-3 flex justify-between items-center">
+        <a href="index.html" class="flex flex-col items-center gap-1 accent-text">
+            <i data-lucide="home" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Home</span>
+        </a>
+        <a href="status.html" class="flex flex-col items-center gap-1 text-muted hover:text-accent">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Status</span>
+        </a>
+        <a href="docs.html" class="flex flex-col items-center gap-1 text-muted hover:text-accent">
+            <i data-lucide="book-open" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Docs</span>
+        </a>
+    </div>
+
+
+    <header class="relative max-w-4xl mx-auto px-6 py-12 md:py-24 text-center overflow-hidden animate-fade-in">
         <div class="absolute inset-0 -z-10 hero-gradient opacity-50"></div>
         <div class="inline-flex items-center gap-3 px-3 py-1 mb-6 text-xs font-bold tracking-widest uppercase accent-soft-bg accent-text rounded-full">
             <span id="version-tag" class="uppercase">Loading...</span>
@@ -210,8 +227,8 @@
                 Loading...
             </span>
         </div>
-        <h1 class="text-5xl md:text-7xl mb-6">Chat like a <span class="accent-text">real hacker</span>.</h1>
-        <p class="text-xl text-muted mb-10 max-w-2xl mx-auto font-light">
+        <h1 class="text-4xl sm:text-5xl md:text-7xl mb-6">Chat like a <span class="accent-text">real hacker</span>.</h1>
+        <p class="text-lg md:text-xl text-muted mb-10 max-w-2xl mx-auto font-light">
             Y is a decentralized, peer-to-peer communication protocol built in Rust.
             Leveraging Tor and DHT for a chat experience where no central authority exists.
         </p>

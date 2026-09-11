@@ -54,92 +54,86 @@
             background-color: var(--bg);
             color: var(--text-main);
             font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
+            min-height: 100vh;
         }
 
         .mono { font-family: 'JetBrains Mono', monospace; }
         .accent-text { color: var(--accent); }
-        .accent-bg { background-color: var(--accent); }
         .surface-bg { background-color: var(--surface); }
         .border-color { border-color: var(--border); }
         .text-muted { color: var(--text-muted); }
 
         .status-indicator {
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             display: inline-block;
-            margin-right: 8px;
+            margin-right: 6px;
         }
-        .up { background-color: var(--status-up); box-shadow: 0 0 8px var(--status-up); }
-        .down { background-color: var(--status-down); box-shadow: 0 0 8px var(--status-down); }
-        .warn { background-color: var(--status-warn); box-shadow: 0 0 8px var(--status-warn); }
-
-        /* Collapsible card smooth transition */
-        #insight-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out;
-            opacity: 0;
-        }
-        #insight-content:not(.hidden) {
-            max-height: 500px; /* Sufficient for content */
-            opacity: 1;
-        }
+        .up { background-color: var(--status-up); box-shadow: 0 0 6px var(--status-up); }
+        .down { background-color: var(--status-down); box-shadow: 0 0 6px var(--status-down); }
+        .warn { background-color: var(--status-warn); box-shadow: 0 0 6px var(--status-warn); }
     </style>
 </head>
-<body>
-    <nav class="max-w-4xl mx-auto px-6 py-8 flex justify-between items-center">
+<body class="pb-24">
+    <!-- Header -->
+    <header class="max-w-4xl mx-auto px-6 py-8 flex justify-between items-center">
         <div class="flex items-center gap-2">
             <span class="text-xl font-bold tracking-tight">Y<span class="accent-text">status</span></span>
         </div>
-        <div class="flex items-center gap-6">
-            <a href="index.html" class="group flex items-center gap-2 text-sm font-semibold transition-all duration-200 hover:text-accent">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transition-transform duration-200 group-hover:-translate-x-1">
-                    <path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>
-                </svg>
-                <span>Home</span>
-            </a>
-            <a href="docs.html" class="text-sm font-semibold hover:text-accent transition-colors">Documentation</a>
+        <div class="hidden md:flex items-center gap-6">
+            <span class="text-sm font-medium text-muted mono">Network Mediator Status</span>
         </div>
-    </nav>
+    </header>
 
-    <main class="max-w-3xl mx-auto px-6 py-12">
-        <div class="mb-12">
-            <h1 class="text-3xl font-extrabold mb-4">Network Mediator Status</h1>
-            <p class="text-muted mb-6">Real-time health of the global seed nodes facilitating peer discovery.</p>
+    <!-- Mobile Bottom Nav -->
+    <div class="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-bg border-t border-color px-6 py-3 flex justify-around items-center">
+        <a href="index.html" class="flex flex-col items-center gap-1 text-muted hover:text-accent transition-colors">
+            <i data-lucide="home" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Home</span>
+        </a>
+        <a href="status.html" class="flex flex-col items-center gap-1 accent-text">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Status</span>
+        </a>
+        <a href="docs.html" class="flex flex-col items-center gap-1 text-muted hover:text-accent transition-colors">
+            <i data-lucide="book-open" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Docs</span>
+        </a>
+    </div>
 
-            <div class="bg-accent-soft-bg rounded-xl border border-accent/20 overflow-hidden">
-                <button id="insight-toggle" class="w-full flex justify-between items-center p-4 text-left focus:outline-none group">
-                    <span class="font-bold accent-text flex items-center gap-2">
-                        <i data-lucide="lightbulb"></i> Network Insights
-                    </span>
-                    <a href="docs.html" class="text-xs font-bold uppercase tracking-widest accent-text hover:underline flex items-center gap-1 transition-all duration-200">
-                        Read Full Docs
-                        <i data-lucide="external-link" class="w-3 h-3"></i>
-                    </a>
-                </button>
-                <div class="p-4 text-sm text-muted leading-relaxed italic">
-                    Detailed network insights and mediator guides have been moved to the <a href="docs.html" class="accent-text font-semibold hover:underline">Documentation page</a>.
-                </div>
+    <main class="max-w-3xl mx-auto px-6 py-4 md:py-12">
+        <!-- Page Intro -->
+        <div class="mb-10 text-center md:text-left">
+            <h1 class="text-2xl md:text-3xl font-extrabold mb-3 tracking-tight">Network Health</h1>
+            <p class="text-muted mb-6 max-w-xl mx-auto md:mx-0">Real-time health of the global seed nodes facilitating peer discovery across the Y network.</p>
+            <div class="flex justify-center md:justify-start">
+                <a href="docs.html" class="inline-flex items-center gap-2 text-xs font-medium text-muted hover:text-accent transition-colors border border-color px-3 py-1 rounded-full">
+                    Detailed insights in docs <i data-lucide="external-link" class="w-3 h-3"></i>
+                </a>
             </div>
         </div>
 
-        <div class="surface-bg border border-color rounded-xl overflow-hidden">
-            <table class="w-full text-left border-collapse">
-                <thead>
-                    <tr class="border-b border-color text-xs uppercase tracking-widest text-muted mono">
-                        <th class="px-6 py-4 font-semibold">Mediator Node</th>
-                        <th class="px-6 py-4 font-semibold">Location</th>
-                        <th class="px-6 py-4 font-semibold text-right">Status</th>
-                    </tr>
-                </thead>
-                <tbody id="status-body">
-                    <!-- Data injected by JS -->
-                </tbody>
-            </table>
+        <!-- Status Table -->
+        <div class="surface-bg border border-color rounded-2xl overflow-hidden shadow-sm">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-color bg-black/5 dark:bg-white/5 text-[11px] uppercase tracking-widest text-muted mono">
+                            <th class="px-6 py-4 font-bold">Mediator Node</th>
+                            <th class="px-6 py-4 font-bold">Location</th>
+                            <th class="px-6 py-4 font-bold text-right">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="status-body">
+                        <!-- Data injected by JS -->
+                    </tbody>
+                </table>
+            </div>
         </div>
 
-        <div class="mt-8 flex items-center gap-4 text-xs mono text-muted">
+        <!-- Legend -->
+        <div class="mt-8 flex flex-wrap justify-center md:justify-start gap-6 text-xs mono text-muted">
             <div class="flex items-center"><span class="status-indicator up"></span> Operational</div>
             <div class="flex items-center"><span class="status-indicator warn"></span> Degraded</div>
             <div class="flex items-center"><span class="status-indicator down"></span> Offline</div>
@@ -150,39 +144,28 @@
         // Initialize Lucide icons
         lucide.createIcons();
 
-        // Mock data for now - this would typically be fetched from a health-check API
+        // Data for a single seed node
         const mediators = [
-            { id: 'mediator-1', name: 'Seed-01', location: 'US-East (Virginia)', status: 'down', ip: '13.63.20.28' },
+            { id: 'mediator-1', name: 'Seed-01', location: 'US-East (Virginia)', status: 'down' },
         ];
 
         const body = document.getElementById('status-body');
 
-        // Toggle Insight Card
-        const toggleBtn = document.getElementById('insight-toggle');
-        const content = document.getElementById('insight-content');
-        const chevron = document.getElementById('chevron');
-
-        toggleBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const isHidden = content.classList.toggle('hidden');
-
-            chevron.style.transform = isHidden ? 'rotate(0deg)' : 'rotate(180deg)';
-        });
-
         mediators.forEach(m => {
             const row = document.createElement('tr');
-            row.className = 'border-b border-color last:border-0 hover:bg-black/5 transition-colors';
+            row.className = 'border-b border-color last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors';
 
             const statusClass = m.status;
             const statusText = m.status === 'up' ? 'Operational' : m.status === 'warn' ? 'Degraded' : 'Offline';
+            const badgeClass = m.status === 'up' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : m.status === 'warn' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
 
             row.innerHTML = `
-                <td class="px-6 py-4">
-                    <div class="font-bold">${m.name}</div>
+                <td class="px-6 py-3">
+                    <div class="font-bold text-sm">${m.name}</div>
                 </td>
-                <td class="px-6 py-4 text-sm text-muted">${m.location}</td>
-                <td class="px-6 py-4 text-right">
-                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${m.status === 'up' ? 'bg-green-100 text-green-800' : m.status === 'warn' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'} dark:bg-opacity-20 dark:text-main">
+                <td class="px-6 py-3 text-sm text-muted">${m.location}</td>
+                <td class="px-6 py-3 text-right">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold ${badgeClass}">
                         <span class="status-indicator ${statusClass}"></span>
                         ${statusText}
                     </span>

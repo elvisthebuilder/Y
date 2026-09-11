@@ -9,6 +9,24 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
+        /* ... existing styles ... */
+        .section-chip {
+            white-space: nowrap;
+            transition: all 0.2s ease;
+            border: 1px solid var(--border);
+        }
+        .section-chip.active {
+            background-color: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
         :root {
             --bg: #ffffff;
             --surface: #f8f9fa;
@@ -143,6 +161,22 @@
             max-height: 400px;
             overflow-y: auto;
         }
+
+        #mobile-menu {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+        }
+        #mobile-menu.open {
+            max-height: 300px;
+            opacity: 1;
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+        }
+        .menu-icon-transition {
+            transition: transform 0.3s ease, opacity 0.2s ease;
+        }
     </style>
 </head>
 <body class="relative">
@@ -151,13 +185,13 @@
             <span class="text-xl font-bold tracking-tight">Y<span class="accent-text">docs</span></span>
         </div>
         <div class="flex items-center gap-6">
-            <!-- Search Bar -->
-            <div class="relative hidden md:block">
-                <div class="flex items-center bg-surface border border-color rounded-full px-3 py-1.5 w-64 focus-within:border-accent transition-colors">
+            <!-- Search Bar (Visible on all screens) -->
+            <div class="relative">
+                <div class="flex items-center bg-surface border border-color rounded-full px-3 py-1.5 w-40 md:w-64 focus-within:border-accent transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted mr-2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                     <input type="text" id="doc-search" placeholder="Search docs..." class="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted">
                 </div>
-                <div id="search-results" class="mt-2 p-2"></div>
+                <div id="search-results" class="absolute top-full right-0 z-50 bg-bg border border-color rounded-lg shadow-lg mt-2 p-2 hidden min-w-[250px]"></div>
             </div>
             <div class="hidden md:flex gap-6 text-sm font-medium border-l border-color pl-6">
                 <a href="index.html" class="hover:text-accent transition-colors">Home</a>
@@ -166,6 +200,30 @@
         </div>
     </nav>
 
+    <!-- Mobile Section Jump Bar -->
+    <div class="md:hidden sticky top-0 z-40 bg-bg border-b border-color py-3">
+        <div class="flex gap-2 overflow-x-auto px-6 hide-scrollbar" id="mobile-section-bar">
+            <!-- Chips injected by JS -->
+        </div>
+    </div>
+
+    <!-- Mobile Bottom Nav -->
+    <div class="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-bg border-t border-color px-6 py-3 flex justify-between items-center">
+        <a href="index.html" class="flex flex-col items-center gap-1 text-muted hover:text-accent">
+            <i data-lucide="home" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Home</span>
+        </a>
+        <a href="status.html" class="flex flex-col items-center gap-1 text-muted hover:text-accent">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Status</span>
+        </a>
+        <a href="docs.html" class="flex flex-col items-center gap-1 accent-text">
+            <i data-lucide="book-open" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold uppercase">Docs</span>
+        </a>
+    </div>
+
+    <!-- Main Content -->
     <main class="max-w-6xl mx-auto px-6 py-12">
         <div class="flex flex-col lg:flex-row gap-12">
             <!-- Table of Contents Sidebar -->
@@ -699,6 +757,61 @@ Y_PORT=8080 y serve</code></pre>
         // Initialize Lucide icons
         lucide.createIcons();
 
+        // Mobile Section Jump Bar Logic
+        const setupMobileSectionBar = () => {
+            const bar = document.getElementById('mobile-section-bar');
+            const sections = document.querySelectorAll('.doc-section');
+            if (!bar || sections.length === 0) return;
+
+            sections.forEach(section => {
+                const id = section.id;
+                const title = section.querySelector('h2').innerText;
+
+                const chip = document.createElement('a');
+                chip.href = `#${id}`;
+                chip.className = 'section-chip px-3 py-1 rounded-full text-xs font-medium text-muted bg-surface';
+                chip.innerText = title;
+                chip.dataset.section = id;
+                bar.appendChild(chip);
+            });
+
+            // Update active chip on scroll
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const id = entry.target.id;
+                        document.querySelectorAll('.section-chip').forEach(chip => {
+                            chip.classList.toggle('active', chip.dataset.section === id);
+                        });
+                        // Auto-scroll chip into view
+                        const activeChip = document.querySelector('.section-chip.active');
+                        if (activeChip) {
+                            activeChip.scrollIntoView({
+                                behavior: 'smooth',
+                                block: 'nearest',
+                                inline: 'center'
+                            });
+                        }
+                    }
+                });
+            }, { rootMargin: '-10% 0px -70%' });
+
+            sections.forEach(section => observer.observe(section));
+
+            // Manually trigger initial check to highlight the starting section
+            const firstSection = sections[0];
+            if (firstSection) {
+                const firstId = firstSection.id;
+                document.querySelectorAll('.section-chip').forEach(chip => {
+                    chip.classList.toggle('active', chip.dataset.section === firstId);
+                });
+            }
+        };
+
+        setupMobileSectionBar();
+
+        // Copy code functionality
+
         // Copy code functionality
         async function copyCode(btn, elementId) {
             const code = document.getElementById(elementId).innerText;
@@ -716,56 +829,47 @@ Y_PORT=8080 y serve</code></pre>
             }, 2000);
         }
 
-        // Search Functionality
-        const searchInput = document.getElementById('doc-search');
-        const searchResults = document.getElementById('search-results');
+        // Search Functionality (Simplified for single input)
+        const setupSearch = () => {
+            const input = document.getElementById('doc-search');
+            const results = document.getElementById('search-results');
+            if (!input || !results) return;
 
-        // Expanded Index for better search
-        const searchIndex = [
-            { id: 'getting-started', title: 'Getting Started', text: 'launch install y open start first run' },
-            { id: 'tui-guide', title: 'TUI Navigation Guide', text: 'keys bindings keyboard tui interface send dm community command mode' },
-            { id: 'identity', title: 'Identity & Keys', text: 'ed25519 public key address alias identity keys keys-storage' },
-            { id: 'messages', title: 'Messaging & Encryption', text: 'encryption dms x25519 chacha20poly1305 signed verify' },
-            { id: 'what-is-a-mediator', title: 'What is a Mediator?', text: 'seed node discovery lighthouse bootstrap privileges' },
-            { id: 'what-unlocks', title: 'What Unlocks When Connected', text: 'global timeline user discovery communities search' },
-            { id: 'when-mediators-down', title: 'What Happens If They Go Down?', text: 'offline direct connection .onion seeds' },
-            { id: 'run-your-own', title: 'Run Your Own Mediator', text: 'y serve seed node host pr contribute' },
-            { id: 'direct-connection', title: 'Direct Peer Connection', text: 'y_peer direct connect no mediator onion address' },
-            { id: 'privacy-faq', title: 'Privacy & Security FAQ', text: 'tor ip leak dm privacy anonymous security' },
-            { id: 'architecture', title: 'Network Architecture', text: 'mesh topology gossip kademlia dht tor flow' },
-            { id: 'troubleshooting', title: 'Troubleshooting', text: 'error connection failed tor daemon identity lost corruption' },
-            { id: 'commands', title: 'Key Commands', text: 't d c p search create join :whoami :peers' },
-        ];
+            input.addEventListener('input', (e) => {
+                const query = e.target.value.toLowerCase();
+                if (!query) {
+                    results.style.display = 'none';
+                    return;
+                }
 
-        searchInput.addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase();
-            if (!query) {
-                searchResults.style.display = 'none';
-                return;
-            }
+                const filtered = searchIndex.filter(item =>
+                    item.title.toLowerCase().includes(query) ||
+                    item.text.toLowerCase().includes(query)
+                );
 
-            const filtered = searchIndex.filter(item =>
-                item.title.toLowerCase().includes(query) ||
-                item.text.toLowerCase().includes(query)
-            );
+                if (filtered.length > 0) {
+                    results.innerHTML = filtered.map(item => `
+                        <a href="#${item.id}" class="block px-4 py-2 hover:bg-surface text-sm transition-colors border-b border-color last:border-0">
+                            <div class="font-bold text-main">${item.title}</div>
+                            <div class="text-xs text-muted truncate">${item.text}</div>
+                        </a>
+                    `).join('');
+                    results.style.display = 'block';
+                } else {
+                    results.innerHTML = `<div class="px-4 py-3 text-sm text-muted italic">No results found...</div>`;
+                    results.style.display = 'block';
+                }
+            });
+        };
 
-            if (filtered.length > 0) {
-                searchResults.innerHTML = filtered.map(item => `
-                    <a href="#${item.id}" class="block px-4 py-2 hover:bg-surface text-sm transition-colors border-b border-color last:border-0">
-                        <div class="font-bold text-main">${item.title}</div>
-                        <div class="text-xs text-muted truncate">${item.text}</div>
-                    </a>
-                `).join('');
-                searchResults.style.display = 'block';
-            } else {
-                searchResults.innerHTML = `<div class="px-4 py-3 text-sm text-muted italic">No results found...</div>`;
-                searchResults.style.display = 'block';
-            }
-        });
+        setupSearch();
 
         // Close search when clicking outside
         document.addEventListener('click', (e) => {
-            if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+            const searchInput = document.getElementById('doc-search');
+            const searchResults = document.getElementById('search-results');
+
+            if (searchInput && !searchInput.contains(e.target) && searchResults && !searchResults.contains(e.target)) {
                 searchResults.style.display = 'none';
             }
         });
