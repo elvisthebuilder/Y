@@ -1,0 +1,10 @@
+/home/afrifa-gilbert/Documents/Dev/root-chat-software/target/release/deps/tor_general_addr-eeea95be1462ea7d.d: /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/lib.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/general.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/unix.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/../README.md
+
+/home/afrifa-gilbert/Documents/Dev/root-chat-software/target/release/deps/libtor_general_addr-eeea95be1462ea7d.rlib: /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/lib.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/general.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/unix.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/../README.md
+
+/home/afrifa-gilbert/Documents/Dev/root-chat-software/target/release/deps/libtor_general_addr-eeea95be1462ea7d.rmeta: /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/lib.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/general.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/unix.rs /home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/../README.md
+
+/home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/lib.rs:
+/home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/general.rs:
+/home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/unix.rs:
+/home/afrifa-gilbert/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tor-general-addr-0.27.0/src/../README.md:
