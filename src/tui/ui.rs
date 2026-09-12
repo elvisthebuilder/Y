@@ -26,6 +26,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Constraint::Min(1),
             Constraint::Length(3),
             Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(frame.area());
 
@@ -33,20 +34,62 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_main(frame, app, chunks[1]);
     draw_input(frame, app, chunks[2]);
     draw_footer(frame, app, chunks[3]);
+    draw_help(frame, app, chunks[4]);
+}
+
+fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
+    let help_text = get_contextual_help(app);
+    let help = Paragraph::new(Line::from(vec![
+        Span::styled(
+            " HELP ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" {}", help_text), Style::default().fg(DIM)),
+    ]));
+    frame.render_widget(help, area);
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
-    let tabs: Vec<Span> = vec![
-        tab_span("t:Timeline", app.view == View::Timeline),
-        Span::raw(" | "),
-        tab_span("d:DMs", app.view == View::DirectMessages),
-        Span::raw(" | "),
-        tab_span("c:Communities", app.view == View::Communities),
-        Span::raw(" | "),
-        tab_span("b:Bookmarks", app.view == View::Bookmarks),
-        Span::raw(" | "),
-        tab_span("p:Profile", app.view == View::Profile),
+    let all_tabs = [
+        ("t:Timeline", View::Timeline),
+        ("d:DMs", View::DirectMessages),
+        ("c:Communities", View::Communities),
+        ("b:Bookmarks", View::Bookmarks),
+        ("p:Profile", View::Profile),
     ];
+
+    let active_idx = all_tabs
+        .iter()
+        .position(|(_, v)| *v == app.view)
+        .unwrap_or(0);
+
+    // Determine how many tabs fit in the current width
+    // Average tab width is roughly 12-15 chars
+    let max_visible = (area.width.saturating_sub(10) / 15).max(1) as usize;
+    let start = if active_idx > max_visible / 2 {
+        active_idx.saturating_sub(max_visible / 2)
+    } else {
+        0
+    };
+    let end = (start + max_visible).min(all_tabs.len());
+    let visible_tabs = &all_tabs[start..end];
+
+    let mut tabs_spans = Vec::new();
+
+    if start > 0 {
+        tabs_spans.push(Span::styled("« ", Style::default().fg(DIM)));
+    }
+
+    for (label, view) in visible_tabs {
+        tabs_spans.push(tab_span(label, *view == app.view));
+        if *view != all_tabs.last().unwrap().1 {
+            tabs_spans.push(Span::raw(" | "));
+        }
+    }
+
+    if end < all_tabs.len() {
+        tabs_spans.push(Span::styled(" »", Style::default().fg(DIM)));
+    }
 
     let (status_icon, status_color, status_label) = if app.is_online {
         ("●", ACCENT, "online")
@@ -60,7 +103,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         status_icon, status_label, app.peer_count
     );
 
-    let header = Paragraph::new(Line::from(tabs)).block(
+    let header = Paragraph::new(Line::from(tabs_spans)).block(
         Block::default()
             .title(" Y ")
             .title_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
@@ -958,6 +1001,23 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(display_msg, Style::default().fg(DIM)),
     ]));
     frame.render_widget(footer, area);
+}
+
+fn get_contextual_help(app: &App) -> String {
+    match app.view {
+        View::Timeline => {
+            " [n] New Post  [s] Save  [Enter] Expand  [/] Search  [p] Profile".to_string()
+        }
+        View::DirectMessages => " [/] New DM  [Enter] Open  [p] Profile".to_string(),
+        View::DMConversation => " [Enter] Send  [Esc] Back  [p] Profile".to_string(),
+        View::Communities => " :create <n>  :join <n>  [Enter] Open  [p] Profile".to_string(),
+        View::CommunityChat => " [n] Compose  [i] Members  [Esc] Back  [p] Profile".to_string(),
+        View::Profile => " :alias <n>  :alias-gen  [Esc] Back".to_string(),
+        View::Bookmarks => {
+            " [.] Nod  [r] Reply  [s] Unsave  [Enter] Expand  [p] Profile".to_string()
+        }
+        _ => " [Esc] Back  [p] Profile".to_string(),
+    }
 }
 
 fn truncate_onion(msg: &str) -> String {

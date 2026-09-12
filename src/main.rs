@@ -25,7 +25,7 @@ use crate::crypto::alias;
 use crate::crypto::identity::Identity;
 use crate::network::engine::{NetworkEngine, NetworkEvent};
 use crate::storage::Storage;
-use crate::tui::app::App;
+use crate::tui::app::{App, InputMode};
 
 #[derive(Parser)]
 #[command(
@@ -458,12 +458,28 @@ async fn open() -> Result<()> {
                         KeyCode::Esc => app.handle_key('\x1b'),
                         KeyCode::Backspace => app.delete_char_before_cursor(),
                         KeyCode::Delete => app.delete_char_at_cursor(),
-                        KeyCode::Left => app.move_cursor_left(),
-                        KeyCode::Right => app.move_cursor_right(),
+                        KeyCode::Left => {
+                            if app.input_mode == InputMode::Normal {
+                                app.cycle_view_prev();
+                            } else {
+                                app.move_cursor_left();
+                            }
+                        }
+                        KeyCode::Right => {
+                            if app.input_mode == InputMode::Normal {
+                                app.cycle_view_next();
+                            } else {
+                                app.move_cursor_right();
+                            }
+                        }
                         KeyCode::Home => app.move_cursor_home(),
                         KeyCode::End => app.move_cursor_end(),
-                        KeyCode::Up => app.handle_arrow_up(),
-                        KeyCode::Down => app.handle_arrow_down(),
+                        KeyCode::Up => {
+                            app.move_selection_up();
+                        }
+                        KeyCode::Down => {
+                            app.move_selection_down();
+                        }
                         _ => {}
                     }
                 }
@@ -580,7 +596,7 @@ async fn open() -> Result<()> {
                 NetworkEvent::ConnectivityChanged(online) => {
                     app.is_online = online;
                     if online {
-                        let mut to_broadcast: Vec<_> = app.outbox.drain(..).collect();
+                        let mut to_broadcast = std::mem::take(&mut app.outbox);
                         let own_posts: Vec<_> = app
                             .timeline
                             .iter()

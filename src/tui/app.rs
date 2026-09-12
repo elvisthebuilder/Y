@@ -989,21 +989,82 @@ impl App {
         }
     }
 
-    pub fn handle_arrow_up(&mut self) {
-        if self.view == View::Search && self.input_mode == InputMode::SearchInput {
-            self.selected_search_result = self.selected_search_result.saturating_sub(1);
-        } else if self.view == View::DMConversation && self.input_mode == InputMode::Normal {
-            self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    pub fn cycle_view_next(&mut self) {
+        self.view = match self.view {
+            View::Timeline => View::DirectMessages,
+            View::DirectMessages => View::Communities,
+            View::Communities => View::Bookmarks,
+            View::Bookmarks => View::Profile,
+            View::Profile => View::Timeline,
+            _ => View::Timeline,
+        };
+        self.scroll_offset = 0;
+        self.selected_post = 0;
+        self.selected_list_item = 0;
+    }
+
+    pub fn cycle_view_prev(&mut self) {
+        self.view = match self.view {
+            View::Timeline => View::Profile,
+            View::Profile => View::Bookmarks,
+            View::Bookmarks => View::Communities,
+            View::Communities => View::DirectMessages,
+            View::DirectMessages => View::Timeline,
+            _ => View::Timeline,
+        };
+        self.scroll_offset = 0;
+        self.selected_post = 0;
+        self.selected_list_item = 0;
+    }
+
+    pub fn move_selection_up(&mut self) {
+        match self.view {
+            View::Timeline | View::Bookmarks => {
+                self.selected_post = self.selected_post.saturating_sub(1);
+            }
+            View::Communities | View::CommunityDetail | View::DirectMessages => {
+                self.selected_list_item = self.selected_list_item.saturating_sub(1);
+            }
+            View::CommunityChat => {
+                self.scroll_offset = self.scroll_offset.saturating_add(1);
+            }
+            _ => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+            }
         }
     }
 
-    pub fn handle_arrow_down(&mut self) {
-        if self.view == View::Search
-            && self.input_mode == InputMode::SearchInput
-            && !self.search_results.is_empty()
-            && self.selected_search_result < self.search_results.len() - 1
-        {
-            self.selected_search_result += 1;
+    pub fn move_selection_down(&mut self) {
+        match self.view {
+            View::Timeline | View::Bookmarks => {
+                let max = self.visible_entries().len();
+                if self.selected_post + 1 < max {
+                    self.selected_post += 1;
+                }
+            }
+            View::Communities => {
+                if self.selected_list_item + 1 < self.communities.len() {
+                    self.selected_list_item += 1;
+                }
+            }
+            View::CommunityDetail => {
+                let max = self.community_detail_item_count();
+                if self.selected_list_item + 1 < max {
+                    self.selected_list_item += 1;
+                }
+            }
+            View::DirectMessages => {
+                let max = self.conversations.len();
+                if max > 0 && self.selected_list_item + 1 < max {
+                    self.selected_list_item += 1;
+                }
+            }
+            View::CommunityChat => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+            }
+            _ => {
+                self.scroll_offset = self.scroll_offset.saturating_add(1);
+            }
         }
     }
 
