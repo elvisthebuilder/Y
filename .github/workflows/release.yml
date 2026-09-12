@@ -98,12 +98,12 @@ jobs:
 
       - name: Package and Upload
         run: |
-          mkdir -p release_artifacts
+          mkdir -p $GITHUB_WORKSPACE/release_artifacts
           if [ "${{ matrix.deb }}" = "true" ]; then
-            cp target/debian/*.deb release_artifacts/
+            cp target/debian/*.deb $GITHUB_WORKSPACE/release_artifacts/
           fi
           cd target/${{ matrix.target }}/release
-          tar czf ../../release_artifacts/y-linux-${{ matrix.arch }}.tar.gz y
+          tar czf $GITHUB_WORKSPACE/release_artifacts/y-linux-${{ matrix.arch }}.tar.gz y
 
       - uses: actions/upload-artifact@v4
         with:
@@ -141,12 +141,11 @@ jobs:
 
       - name: Package and Upload
         run: |
-          mkdir -p release_artifacts
+          mkdir -p $GITHUB_WORKSPACE/release_artifacts
           cd target/${{ matrix.target }}/release
-          tar czf ../../release_artifacts/y-macos-${{ matrix.arch }}.tar.gz y
-          # Also upload the .dmg as we had it before
-          if [ -f "../../y-macos-${{ matrix.arch }}.dmg" ]; then
-            cp ../../y-macos-${{ matrix.arch }}.dmg ../../release_artifacts/
+          tar czf $GITHUB_WORKSPACE/release_artifacts/y-macos-${{ matrix.arch }}.tar.gz y
+          if [ -f "$GITHUB_WORKSPACE/y-macos-${{ matrix.arch }}.dmg" ]; then
+            cp "$GITHUB_WORKSPACE/y-macos-${{ matrix.arch }}.dmg" $GITHUB_WORKSPACE/release_artifacts/
           fi
 
       - uses: actions/upload-artifact@v4
@@ -182,10 +181,10 @@ jobs:
 
       - name: Package and Upload
         run: |
-          mkdir -p release_artifacts
-          cp target/release/y.exe release_artifacts/
+          mkdir -p $GITHUB_WORKSPACE/release_artifacts
+          cp target/release/y.exe $GITHUB_WORKSPACE/release_artifacts/
           if [ -d "target/wix" ]; then
-            cp target/wix/*.msi release_artifacts/
+            cp target/wix/*.msi $GITHUB_WORKSPACE/release_artifacts/
           fi
 
       - uses: actions/upload-artifact@v4
