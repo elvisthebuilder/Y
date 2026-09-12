@@ -25,7 +25,7 @@ use crate::crypto::alias;
 use crate::crypto::identity::Identity;
 use crate::network::engine::{NetworkEngine, NetworkEvent};
 use crate::storage::Storage;
-use crate::tui::app::App;
+use crate::tui::app::{App, InputMode};
 
 #[derive(Parser)]
 #[command(
@@ -458,12 +458,36 @@ async fn open() -> Result<()> {
                         KeyCode::Esc => app.handle_key('\x1b'),
                         KeyCode::Backspace => app.delete_char_before_cursor(),
                         KeyCode::Delete => app.delete_char_at_cursor(),
-                        KeyCode::Left => app.move_cursor_left(),
-                        KeyCode::Right => app.move_cursor_right(),
+                        KeyCode::Left => {
+                            if app.input_mode == InputMode::Normal {
+                                app.cycle_view_prev();
+                            } else {
+                                app.move_cursor_left();
+                            }
+                        }
+                        KeyCode::Right => {
+                            if app.input_mode == InputMode::Normal {
+                                app.cycle_view_next();
+                            } else {
+                                app.move_cursor_right();
+                            }
+                        }
                         KeyCode::Home => app.move_cursor_home(),
                         KeyCode::End => app.move_cursor_end(),
-                        KeyCode::Up => app.handle_arrow_up(),
-                        KeyCode::Down => app.handle_arrow_down(),
+                        KeyCode::Up => {
+                            if app.input_mode == InputMode::Normal {
+                                app.move_selection_up();
+                            } else {
+                                app.move_selection_up();
+                            }
+                        }
+                        KeyCode::Down => {
+                            if app.input_mode == InputMode::Normal {
+                                app.move_selection_down();
+                            } else {
+                                app.move_selection_down();
+                            }
+                        }
                         _ => {}
                     }
                 }

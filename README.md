@@ -154,6 +154,8 @@ This removes the binary and all local data (`~/.root-chat`).
 
 | Key | Action |
 |-----|--------|
+| `←` / `→` | Switch views (Timeline $\rightarrow$ DMs $\rightarrow$ Communities $\rightarrow$ Bookmarks $\rightarrow$ Profile) |
+| `↑` / `↓` | Navigate posts / list items |
 | `t` | Timeline (public posts) |
 | `d` | Direct messages |
 | `c` | Communities |
