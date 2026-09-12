@@ -261,12 +261,8 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: |
-            artifacts/y-linux-deb/*.deb
-            artifacts/y-linux-x86_64.tar.gz
-            artifacts/y-linux-aarch64.tar.gz
-            artifacts/y-macos-x86_64.tar.gz
-            artifacts/y-macos-aarch64.tar.gz
-            artifacts/y-macos-x86_64.dmg
-            artifacts/y-macos-aarch64.dmg
-            artifacts/y-windows-msi/*.msi
-            artifacts/y-windows-exe/y.exe
+            artifacts/**/*.deb
+            artifacts/**/*.tar.gz
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.exe
