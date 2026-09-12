@@ -1068,7 +1068,6 @@ impl App {
         }
     }
 
-
     fn open_dm_conversation(&mut self, alias: String, address: String) {
         self.dm_recipient = Some((alias.clone(), address.clone()));
         self.view = View::DMConversation;

@@ -40,7 +40,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let help_text = get_contextual_help(app);
     let help = Paragraph::new(Line::from(vec![
-        Span::styled(" HELP ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " HELP ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(format!(" {}", help_text), Style::default().fg(DIM)),
     ]));
     frame.render_widget(help, area);
@@ -55,7 +58,10 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         ("p:Profile", View::Profile),
     ];
 
-    let active_idx = all_tabs.iter().position(|(_, v)| *v == app.view).unwrap_or(0);
+    let active_idx = all_tabs
+        .iter()
+        .position(|(_, v)| *v == app.view)
+        .unwrap_or(0);
 
     // Determine how many tabs fit in the current width
     // Average tab width is roughly 12-15 chars
@@ -999,13 +1005,17 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 fn get_contextual_help(app: &App) -> String {
     match app.view {
-        View::Timeline => " [n] New Post  [s] Save  [Enter] Expand  [/] Search  [p] Profile".to_string(),
+        View::Timeline => {
+            " [n] New Post  [s] Save  [Enter] Expand  [/] Search  [p] Profile".to_string()
+        }
         View::DirectMessages => " [/] New DM  [Enter] Open  [p] Profile".to_string(),
         View::DMConversation => " [Enter] Send  [Esc] Back  [p] Profile".to_string(),
         View::Communities => " :create <n>  :join <n>  [Enter] Open  [p] Profile".to_string(),
         View::CommunityChat => " [n] Compose  [i] Members  [Esc] Back  [p] Profile".to_string(),
         View::Profile => " :alias <n>  :alias-gen  [Esc] Back".to_string(),
-        View::Bookmarks => " [.] Nod  [r] Reply  [s] Unsave  [Enter] Expand  [p] Profile".to_string(),
+        View::Bookmarks => {
+            " [.] Nod  [r] Reply  [s] Unsave  [Enter] Expand  [p] Profile".to_string()
+        }
         _ => " [Esc] Back  [p] Profile".to_string(),
     }
 }
