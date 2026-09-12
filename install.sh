@@ -19,6 +19,7 @@ detect_platform() {
         Linux)
             case "$arch" in
                 x86_64) echo "y-linux-x86_64.tar.gz" ;;
+                aarch64) echo "y-linux-aarch64.tar.gz" ;;
                 *) echo "unsupported" ;;
             esac
             ;;
