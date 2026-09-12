@@ -47,34 +47,48 @@ jobs:
         run: cargo test --all
 
   build-linux:
-    name: Build Linux (.deb + binary)
+    name: Build Linux (.deb + binaries)
     needs: quality-gate
     if: ${{ !inputs.os || inputs.os == 'all' || inputs.os == 'linux' }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+            deb: true
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+            deb: false
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release
-
-      - name: Install cargo-deb
-        run: cargo install cargo-deb
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Build .deb package
-        run: cargo deb --no-build
+        if: ${{ matrix.deb }}
+        run: |
+          cargo install cargo-deb
+          cargo deb --target ${{ matrix.target }} --no-build
 
       - name: Package tarball
         run: |
-          cd target/release
-          tar czf ../../y-linux-x86_64.tar.gz y
+          cd target/${{ matrix.target }}/release
+          tar czf ../../y-linux-${{ matrix.arch }}.tar.gz y
 
       - name: Upload .deb
+        if: ${{ matrix.deb }}
         uses: actions/upload-artifact@v4
         with:
           name: y-linux-deb
@@ -83,8 +97,9 @@ jobs:
       - name: Upload tarball
         uses: actions/upload-artifact@v4
         with:
-          name: y-linux-x86_64.tar.gz
-          path: y-linux-x86_64.tar.gz
+          name: y-linux-${{ matrix.arch }}.tar.gz
+          path: y-linux-${{ matrix.arch }}.tar.gz
+
 
   build-macos:
     name: Build macOS (.dmg)
@@ -234,6 +249,7 @@ jobs:
           files: |
             artifacts/y-linux-deb/*.deb
             artifacts/y-linux-x86_64.tar.gz/*
+            artifacts/y-linux-aarch64.tar.gz/*
             artifacts/y-macos-x86_64.tar.gz/*
             artifacts/y-macos-aarch64.tar.gz/*
             artifacts/y-macos-x86_64.dmg/*
