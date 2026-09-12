@@ -208,9 +208,7 @@ jobs:
           path: artifacts
 
       - name: Debug: List all files in artifacts
-        run: |
-          echo "Listing all files in artifacts directory:"
-          find artifacts -type f
+        run: find artifacts -type f
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
