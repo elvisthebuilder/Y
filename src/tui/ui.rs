@@ -50,7 +50,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
-    let all_tabs = vec![
+    let all_tabs = [
         ("t:Timeline", View::Timeline),
         ("d:DMs", View::DirectMessages),
         ("c:Communities", View::Communities),

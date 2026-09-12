@@ -475,18 +475,10 @@ async fn open() -> Result<()> {
                         KeyCode::Home => app.move_cursor_home(),
                         KeyCode::End => app.move_cursor_end(),
                         KeyCode::Up => {
-                            if app.input_mode == InputMode::Normal {
-                                app.move_selection_up();
-                            } else {
-                                app.move_selection_up();
-                            }
+                            app.move_selection_up();
                         }
                         KeyCode::Down => {
-                            if app.input_mode == InputMode::Normal {
-                                app.move_selection_down();
-                            } else {
-                                app.move_selection_down();
-                            }
+                            app.move_selection_down();
                         }
                         _ => {}
                     }
@@ -604,7 +596,7 @@ async fn open() -> Result<()> {
                 NetworkEvent::ConnectivityChanged(online) => {
                     app.is_online = online;
                     if online {
-                        let mut to_broadcast: Vec<_> = app.outbox.drain(..).collect();
+                        let mut to_broadcast = std::mem::take(&mut app.outbox);
                         let own_posts: Vec<_> = app
                             .timeline
                             .iter()
