@@ -22,6 +22,7 @@ chacha20poly1305 = "0.10"
 sha2 = "0.10"
 rand = "0.8"
 base64 = "0.22"
+openssl = { version = "0.10", features = ["vendored"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
