@@ -96,23 +96,19 @@ jobs:
           cargo install cargo-deb
           cargo deb --target ${{ matrix.target }} --no-build
 
-      - name: Package tarball
+      - name: Package and Upload
         run: |
+          mkdir -p release_artifacts
+          if [ "${{ matrix.deb }}" = "true" ]; then
+            cp target/debian/*.deb release_artifacts/
+          fi
           cd target/${{ matrix.target }}/release
-          tar czf ../../y-linux-${{ matrix.arch }}.tar.gz y
+          tar czf ../../release_artifacts/y-linux-${{ matrix.arch }}.tar.gz y
 
-      - name: Upload .deb
-        if: ${{ matrix.deb }}
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: y-linux-deb
-          path: target/debian/*.deb
-
-      - name: Upload tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: y-linux-${{ matrix.arch }}.tar.gz
-          path: y-linux-${{ matrix.arch }}.tar.gz
+          name: binaries
+          path: release_artifacts/
 
 
   build-macos:
@@ -143,62 +139,20 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Install create-dmg
-        run: brew install create-dmg
-
-      - name: Create .app bundle
+      - name: Package and Upload
         run: |
-          mkdir -p Y.app/Contents/MacOS
-          cp target/${{ matrix.target }}/release/y Y.app/Contents/MacOS/y
-          chmod +x Y.app/Contents/MacOS/y
-          cat > Y.app/Contents/Info.plist << 'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>y</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.elvisthebuilder.y</string>
-              <key>CFBundleName</key>
-              <string>Y</string>
-              <key>CFBundleVersion</key>
-              <string>0.1.0</string>
-              <key>CFBundleShortVersionString</key>
-              <string>0.1.0</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>11.0</string>
-          </dict>
-          </plist>
-          PLIST
-
-      - name: Create .dmg
-        run: |
-          create-dmg \
-            --volname "Y" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --hide-extension "Y.app" \
-            --no-internet-enable \
-            "y-macos-${{ matrix.arch }}.dmg" \
-            "Y.app" || true
-
-      - name: Package tarball
-        run: |
+          mkdir -p release_artifacts
           cd target/${{ matrix.target }}/release
-          tar czf ../../../y-macos-${{ matrix.arch }}.tar.gz y
+          tar czf ../../release_artifacts/y-macos-${{ matrix.arch }}.tar.gz y
+          # Also upload the .dmg as we had it before
+          if [ -f "../../y-macos-${{ matrix.arch }}.dmg" ]; then
+            cp ../../y-macos-${{ matrix.arch }}.dmg ../../release_artifacts/
+          fi
 
-      - name: Upload .dmg
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: y-macos-${{ matrix.arch }}.dmg
-          path: y-macos-${{ matrix.arch }}.dmg
-
-      - name: Upload tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: y-macos-${{ matrix.arch }}.tar.gz
-          path: y-macos-${{ matrix.arch }}.tar.gz
+          name: binaries
+          path: release_artifacts/
 
   build-windows:
     name: Build Windows (.msi + .exe)
@@ -226,17 +180,18 @@ jobs:
       - name: Build .msi installer
         run: cargo wix --no-build --nocapture
 
-      - name: Upload .msi
-        uses: actions/upload-artifact@v4
-        with:
-          name: y-windows-msi
-          path: target/wix/*.msi
+      - name: Package and Upload
+        run: |
+          mkdir -p release_artifacts
+          cp target/release/y.exe release_artifacts/
+          if [ -d "target/wix" ]; then
+            cp target/wix/*.msi release_artifacts/
+          fi
 
-      - name: Upload .exe
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: y-windows-exe
-          path: target/release/y.exe
+          name: binaries
+          path: release_artifacts/
 
   release:
     name: Upload to Release
@@ -252,8 +207,10 @@ jobs:
         with:
           path: artifacts
 
-      - name: List artifacts
-        run: find artifacts -type f
+      - name: Debug: List all files in artifacts
+        run: |
+          echo "Listing all files in artifacts directory:"
+          find artifacts -type f
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
