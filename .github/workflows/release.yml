@@ -207,7 +207,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Debug: List all files in artifacts
+      - name: Debug - List all files in artifacts
         run: find artifacts -type f
 
       - name: Upload to Release
