@@ -62,7 +62,11 @@ main() {
     trap 'rm -rf "$TMP"' EXIT
 
     echo "  Downloading..."
-    curl -sL "$URL" -o "$TMP/$ARCHIVE"
+    if ! curl -sLf "$URL" -o "$TMP/$ARCHIVE"; then
+        echo "  Error: Could not download the archive for your platform ($ARCHIVE)."
+        echo "  The asset might be missing from the current release ($VERSION)."
+        exit 1
+    fi
 
     echo "  Extracting..."
     tar xzf "$TMP/$ARCHIVE" -C "$TMP"
