@@ -107,7 +107,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binaries-linux-${{ matrix.arch }}
           path: release_artifacts/
 
 
@@ -150,7 +150,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binaries-macos-${{ matrix.arch }}
           path: release_artifacts/
 
   build-windows:
@@ -180,16 +180,17 @@ jobs:
         run: cargo wix --no-build --nocapture
 
       - name: Package and Upload
+        shell: pwsh
         run: |
-          mkdir -p $GITHUB_WORKSPACE/release_artifacts
-          cp target/release/y.exe $GITHUB_WORKSPACE/release_artifacts/
-          if [ -d "target/wix" ]; then
-            cp target/wix/*.msi $GITHUB_WORKSPACE/release_artifacts/
-          fi
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/release_artifacts"
+          Copy-Item "target/release/y.exe" -Destination "$env:GITHUB_WORKSPACE/release_artifacts/"
+          if (Test-Path "target/wix") {
+            Copy-Item "target/wix/*.msi" -Destination "$env:GITHUB_WORKSPACE/release_artifacts/"
+          }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binaries-windows
           path: release_artifacts/
 
   release:
