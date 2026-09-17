@@ -270,7 +270,7 @@ impl NetworkEngine {
                                     sender: stored.sender,
                                     ephemeral_public: stored.ephemeral_public,
                                     nonce: stored.nonce,
-                                    ciphertext: stored.ciphertext,
+                                    ciphertext: stored.ciphertext.clone(),
                                     timestamp: stored.timestamp,
                                 })
                             } else {
@@ -564,7 +564,7 @@ impl NetworkEngine {
                     sender: stored.sender,
                     ephemeral_public: stored.ephemeral_public,
                     nonce: stored.nonce,
-                    ciphertext: stored.ciphertext,
+                    ciphertext: stored.ciphertext.clone(),
                     timestamp: stored.timestamp,
                 };
                 let _ = self.event_tx.send(NetworkEvent::NewDirectMessage(envelope));
@@ -671,7 +671,7 @@ impl NetworkEngine {
             content,
             signature,
             timestamp: post.timestamp,
-            ttl: 86400 * 7,
+            ttl: 86400 * 7, // 7 days
         };
 
         let tor_lock = self.tor.read().await;
@@ -964,7 +964,7 @@ impl NetworkEngine {
                 .add_node(DhtNode {
                     id: NodeId::from_address(&peer.address),
                     address: peer.address.clone(),
-                    onion_addr: peer.onion_addr.clone(),
+                    onion_addr: peer.listen_addr.clone(),
                     last_seen: Utc::now(),
                 })
                 .await;
@@ -1122,8 +1122,8 @@ impl NetworkEngine {
                 self.evict_dead_peers().await;
             } else {
                 fail_count += 1;
-                // Only mark offline after 3 consecutive failures (~90s)
-                if was_online && fail_count >= 3 {
+                // Only mark offline after 5 consecutive failures (~150s)
+                if was_online && fail_count >= 5 {
                     was_online = false;
                     let _ = self.event_tx.send(NetworkEvent::ConnectivityChanged(false));
                     info!("Connectivity lost");
@@ -1237,7 +1237,7 @@ impl NetworkEngine {
 
         for addr in peer_addrs.iter().take(3) {
             if let Ok(Ok(stream)) =
-                tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(addr)).await
+                tokio::time::timeout(std::time::Duration::from_secs(30), tor.connect(addr)).await
             {
                 let mut framed = FramedStream::new(stream);
                 let hello = HelloPayload {
@@ -1249,7 +1249,7 @@ impl NetworkEngine {
                 };
                 if framed.send_json(&WireMessage::Hello(hello)).await.is_ok() {
                     if let Ok(Ok(WireMessage::HelloAck(_))) = tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
+                        std::time::Duration::from_secs(20),
                         framed.recv_json::<WireMessage>(),
                     )
                     .await
@@ -1257,7 +1257,7 @@ impl NetworkEngine {
                         let nonce: u64 = rand::random();
                         if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
                             if let Ok(Ok(WireMessage::Pong(_))) = tokio::time::timeout(
-                                std::time::Duration::from_secs(10),
+                                std::time::Duration::from_secs(20),
                                 framed.recv_json::<WireMessage>(),
                             )
                             .await
@@ -1273,7 +1273,7 @@ impl NetworkEngine {
         // Fall back to trying seed nodes
         for seed in SEED_NODES {
             if let Ok(stream) =
-                tokio::time::timeout(std::time::Duration::from_secs(15), tor.connect(seed)).await
+                tokio::time::timeout(std::time::Duration::from_secs(30), tor.connect(seed)).await
             {
                 if stream.is_ok() {
                     return true;
@@ -1330,18 +1330,18 @@ impl NetworkEngine {
 
         let tor_lock = self.tor.read().await;
         if let Some(tor) = tor_lock.as_ref() {
-            for onion in peers {
-                if let Ok(stream) = tor.connect(&onion).await {
+            let my_onion = tor
+                .onion_address()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            for peer in peers {
+                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
                     let mut framed = FramedStream::new(stream);
-                    let my_onion = tor
-                        .onion_address()
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
                     let hello = HelloPayload {
                         address: self.identity.address.clone(),
                         alias: self.alias.clone(),
                         verifying_key: self.identity.verifying_key.to_bytes(),
-                        listen_addr: my_onion,
+                        listen_addr: my_onion.clone(),
                         timestamp: Utc::now(),
                     };
                     let _ = framed.send_json(&WireMessage::Hello(hello)).await;
@@ -1629,6 +1629,7 @@ impl NetworkEngine {
                     let mut framed = FramedStream::new(stream);
                     let hello = HelloPayload {
                         address: self.identity.address.clone(),
+                        alias: self.//LENS_MISSING
                         alias: self.alias.clone(),
                         verifying_key: self.identity.verifying_key.to_bytes(),
                         listen_addr: my_onion.clone(),
