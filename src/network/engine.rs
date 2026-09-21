@@ -1219,69 +1219,15 @@ impl NetworkEngine {
     }
 
     async fn check_connectivity(&self) -> bool {
-        let peer_addrs: Vec<String> = {
-            let peers = self.peers.read().await;
-            peers.values().map(|p| p.onion_addr.clone()).collect()
-        };
-
         let tor_lock = self.tor.read().await;
-        let tor = match tor_lock.as_ref() {
-            Some(t) => t,
-            None => return false,
-        };
-
-        let my_onion = tor
-            .onion_address()
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-
-        for addr in peer_addrs.iter().take(3) {
-            if let Ok(Ok(stream)) =
-                tokio::time::timeout(std::time::Duration::from_secs(30), tor.connect(addr)).await
-            {
-                let mut framed = FramedStream::new(stream);
-                let hello = HelloPayload {
-                    address: self.identity.address.clone(),
-                    alias: self.alias.clone(),
-                    verifying_key: self.identity.verifying_key.to_bytes(),
-                    listen_addr: my_onion.clone(),
-                    timestamp: Utc::now(),
-                };
-                if framed.send_json(&WireMessage::Hello(hello)).await.is_ok() {
-                    if let Ok(Ok(WireMessage::HelloAck(_))) = tokio::time::timeout(
-                        std::time::Duration::from_secs(20),
-                        framed.recv_json::<WireMessage>(),
-                    )
-                    .await
-                    {
-                        let nonce: u64 = rand::random();
-                        if framed.send_json(&WireMessage::Ping(nonce)).await.is_ok() {
-                            if let Ok(Ok(WireMessage::Pong(_))) = tokio::time::timeout(
-                                std::time::Duration::from_secs(20),
-                                framed.recv_json::<WireMessage>(),
-                            )
-                            .await
-                            {
-                                return true;
-                            }
-                        }
-                    }
-                }
+        match tor_lock.as_ref() {
+            Some(tor) => {
+                // If Tor is bootstrapped and we have an onion address,
+                // we are considered "online" regardless of peer connectivity.
+                !tor.onion_address().is_empty()
             }
+            None => false,
         }
-
-        // Fall back to trying seed nodes
-        for seed in SEED_NODES {
-            if let Ok(stream) =
-                tokio::time::timeout(std::time::Duration::from_secs(30), tor.connect(seed)).await
-            {
-                if stream.is_ok() {
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 
     async fn relay_nod_event(&self, msg: &WireMessage, originator: &str) {
@@ -1629,7 +1575,6 @@ impl NetworkEngine {
                     let mut framed = FramedStream::new(stream);
                     let hello = HelloPayload {
                         address: self.identity.address.clone(),
-                        alias: self.//LENS_MISSING
                         alias: self.alias.clone(),
                         verifying_key: self.identity.verifying_key.to_bytes(),
                         listen_addr: my_onion.clone(),
