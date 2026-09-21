@@ -964,7 +964,7 @@ impl NetworkEngine {
                 .add_node(DhtNode {
                     id: NodeId::from_address(&peer.address),
                     address: peer.address.clone(),
-                    onion_addr: peer.listen_addr.clone(),
+                    onion_addr: peer.onion_addr.clone(),
                     last_seen: Utc::now(),
                 })
                 .await;
@@ -1224,7 +1224,7 @@ impl NetworkEngine {
             Some(tor) => {
                 // If Tor is bootstrapped and we have an onion address,
                 // we are considered "online" regardless of peer connectivity.
-                !tor.onion_address().is_empty()
+                tor.onion_address().is_some()
             }
             None => false,
         }
@@ -1281,7 +1281,7 @@ impl NetworkEngine {
                 .map(|s| s.to_string())
                 .unwrap_or_default();
             for peer in peers {
-                if let Ok(stream) = tor.connect(&peer.onion_addr).await {
+                if let Ok(stream) = tor.connect(&peer).await {
                     let mut framed = FramedStream::new(stream);
                     let hello = HelloPayload {
                         address: self.identity.address.clone(),
