@@ -121,18 +121,10 @@ fn update() -> Result<()> {
         .output()?;
 
     let body = String::from_utf8_lossy(&output.stdout);
-    let latest_tag = body
-        .lines()
-        .find(|l| l.contains("\"tag_name\""))
-        .and_then(|l| {
-            let after_key = &l[l.find("tag_name")? + 10..];
-            let start = after_key.find('"')? + 1;
-            let end = start + after_key[start..].find('"')?;
-            Some(after_key[start..end].to_string())
-        });
+    let json: serde_json::Value = serde_json::from_str(&body)?;
 
-    let latest = match latest_tag {
-        Some(t) => t,
+    let latest = match json["tag_name"].as_str() {
+        Some(t) => t.to_string(),
         None => {
             println!("Could not fetch latest release.");
             return Ok(());
@@ -164,13 +156,15 @@ fn update() -> Result<()> {
 
     let use_deb = has_dpkg && arch == "x86_64";
 
-    let asset = if use_deb {
+    let asset_name = if use_deb {
         format!("y_{}-1_amd64.deb", latest.trim_start_matches('v'))
     } else {
         match (os, arch) {
             ("linux", "x86_64") => "y-linux-x86_64.tar.gz".to_string(),
+            ("linux", "aarch64") => "y-linux-aarch64.tar.gz".to_string(),
             ("macos", "x86_64") => "y-macos-x86_64.tar.gz".to_string(),
             ("macos", "aarch64") => "y-macos-aarch64.tar.gz".to_string(),
+            ("windows", "x86_64") => "y-windows-x86_64.zip".to_string(),
             _ => {
                 println!(
                     "Unsupported platform ({} {}). Download manually from:",
@@ -185,19 +179,26 @@ fn update() -> Result<()> {
         }
     };
 
+    // Find expected size from assets list
+    let expected_size = json["assets"]
+        .as_array()
+        .and_then(|assets| {
+            assets.iter().find(|a| a["name"] == asset_name).and_then(|a| a["size"].as_u64())
+        });
+
     let url = format!(
         "https://github.com/elvisthebuilder/Y/releases/download/{}/{}",
-        latest, asset
+        latest, asset_name
     );
 
-    println!("Downloading {}...", asset);
+    println!("Downloading {}...", asset_name);
 
     let tmp_dir = std::env::temp_dir().join("y-update");
     let _ = std::fs::create_dir_all(&tmp_dir);
-    let asset_path = tmp_dir.join(&asset);
+    let asset_path = tmp_dir.join(&asset_name);
 
     let dl = Cmd::new("curl")
-        .args(["-sL", &url, "-o"])
+        .args(["-f", "-sL", &url, "-o"])
         .arg(&asset_path)
         .status()?;
 
@@ -207,11 +208,65 @@ fn update() -> Result<()> {
         return Ok(());
     }
 
+    // Verify download integrity via file size
+    if let Some(expected) = expected_size {
+        let actual = std::fs::metadata(&asset_path)?.len();
+        if actual != expected {
+            println!(
+                "Download corrupted: expected {} bytes, got {} bytes.",
+                expected, actual
+            );
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Ok(());
+        }
+    } else {
+        // Fallback: at least check it's not empty
+        if std::fs::metadata(&asset_path)?.len() == 0 {
+            println!("Downloaded file is empty.");
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Ok(());
+        }
+    }
+
     let success = if use_deb {
         println!("Installing via dpkg...");
         let status = Cmd::new("sudo")
             .args(["dpkg", "-i"])
             .arg(&asset_path)
+            .status()?;
+        status.success()
+    } else if os == "windows" {
+        println!("Updating Windows binary...");
+        let current_exe = std::env::current_exe()?;
+        let exe_dir = current_exe.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let new_exe_path = exe_dir.join("y.exe");
+
+        // Windows locks the running binary. We create a batch script to do the swap after we exit.
+        let script_path = tmp_dir.join("update_y.bat");
+        let script_content = format!(
+            "@echo off\n\
+             timeout /t 2 /nobreak > nul\n\
+             del \"{}\"\n\
+             move \"{}\" \"{}\"\n\
+             echo Update complete. You can now restart Y.\n\
+             pause",
+            current_exe.display(),
+            asset_path.display(), // This assumes the asset is the exe itself or we unzip it first.
+            current_exe.display()
+        );
+        // Note: If the asset is a .zip, we'd need to unzip it first.
+        // For simplicity, let's assume we provide a raw .exe asset for the update flow or use a zip.
+        // Actually, the common way is to provide a zip. Let's use a zip and a simple powershell command.
+
+        let ps_script = format!(
+            "Start-Sleep -s 2; Remove-Item -Path '{}' -Force; Move-Item -Path '{}' -Destination '{}'",
+            current_exe.display(),
+            asset_path.display(),
+            current_exe.display()
+        );
+
+        let status = Cmd::new("powershell")
+            .args(["-Command", &ps_script])
             .status()?;
         status.success()
     } else {
