@@ -180,11 +180,12 @@ fn update() -> Result<()> {
     };
 
     // Find expected size from assets list
-    let expected_size = json["assets"]
-        .as_array()
-        .and_then(|assets| {
-            assets.iter().find(|a| a["name"] == asset_name).and_then(|a| a["size"].as_u64())
-        });
+    let expected_size = json["assets"].as_array().and_then(|assets| {
+        assets
+            .iter()
+            .find(|a| a["name"] == asset_name)
+            .and_then(|a| a["size"].as_u64())
+    });
 
     let url = format!(
         "https://github.com/elvisthebuilder/Y/releases/download/{}/{}",
@@ -238,26 +239,8 @@ fn update() -> Result<()> {
     } else if os == "windows" {
         println!("Updating Windows binary...");
         let current_exe = std::env::current_exe()?;
-        let exe_dir = current_exe.parent().unwrap_or_else(|| std::path::Path::new("."));
-        let new_exe_path = exe_dir.join("y.exe");
 
         // Windows locks the running binary. We create a batch script to do the swap after we exit.
-        let script_path = tmp_dir.join("update_y.bat");
-        let script_content = format!(
-            "@echo off\n\
-             timeout /t 2 /nobreak > nul\n\
-             del \"{}\"\n\
-             move \"{}\" \"{}\"\n\
-             echo Update complete. You can now restart Y.\n\
-             pause",
-            current_exe.display(),
-            asset_path.display(), // This assumes the asset is the exe itself or we unzip it first.
-            current_exe.display()
-        );
-        // Note: If the asset is a .zip, we'd need to unzip it first.
-        // For simplicity, let's assume we provide a raw .exe asset for the update flow or use a zip.
-        // Actually, the common way is to provide a zip. Let's use a zip and a simple powershell command.
-
         let ps_script = format!(
             "Start-Sleep -s 2; Remove-Item -Path '{}' -Force; Move-Item -Path '{}' -Destination '{}'",
             current_exe.display(),
